@@ -1,7 +1,7 @@
 use crate::znode::ZNode;
 
 pub struct KeeperStorage {
-    root: ZNode
+    root: ZNode,
 }
 
 impl KeeperStorage {
@@ -21,7 +21,6 @@ impl KeeperStorage {
     }
 
     pub fn traverse_mut(&mut self, path: &str) -> Option<&mut ZNode> {
-        
         let segments = path.split("/").filter(|s| !s.is_empty());
 
         let mut current_root = &mut self.root;
@@ -35,8 +34,8 @@ impl KeeperStorage {
 
     pub fn create(&mut self, path: &str, data: Vec<u8>) -> Result<(), &'static str> {
         let (parent_path, child_name) = match path.rsplit_once("/") {
-            Some((p, c)) => (p, c), 
-            None => return Err("Invalid path format. No child found")
+            Some((p, c)) => (p, c),
+            None => return Err("Invalid path format. No child found"),
         };
 
         // Prevent trying to recreate the root node (e.g., path == "/")
@@ -53,10 +52,10 @@ impl KeeperStorage {
         newnode.data = data;
 
         if parent.children.contains_key(child_name) {
-            return Err("Node already exists"); 
+            return Err("Node already exists");
         }
 
-        parent.children.insert(child_name.to_string(), newnode); 
+        parent.children.insert(child_name.to_string(), newnode);
 
         Ok(())
     }
@@ -64,11 +63,11 @@ impl KeeperStorage {
     pub fn get(&self, path: &str) -> Result<Vec<u8>, &'static str> {
         match self.traverse(path) {
             Some(node) => {
-                // If found, we must .clone() the data because our function 
+                // If found, we must .clone() the data because our function
                 // signature promises to return an owned Vec<u8>, but `traverse`
                 // only gives us a borrowed reference (&ZNode).
                 Ok(node.data.clone())
-            },
+            }
             None => Err("Node not found"),
         }
     }
@@ -77,14 +76,14 @@ impl KeeperStorage {
         match self.traverse_mut(path) {
             Some(node) => {
                 node.data = data;
-                // It is very important in distributed systems to increment the version 
+                // It is very important in distributed systems to increment the version
                 // whenever a node changes so clients know an update happened!
-                // This is for Optimistic Concurrency Control. 
+                // This is for Optimistic Concurrency Control.
                 // TODO: Later, revisit this and understand this better
                 node.version += 1;
-                
+
                 Ok(())
-            },
+            }
             None => Err("Node not found"),
         }
     }
@@ -92,8 +91,8 @@ impl KeeperStorage {
     pub fn delete(&mut self, path: &str) -> Result<(), &'static str> {
         // Split the path just like in create
         let (parent_path, child_name) = match path.rsplit_once("/") {
-            Some((p, c)) => (p, c), 
-            None => return Err("Invalid path format. No child found")
+            Some((p, c)) => (p, c),
+            None => return Err("Invalid path format. No child found"),
         };
 
         if child_name.is_empty() {
@@ -108,7 +107,7 @@ impl KeeperStorage {
 
         // Remove the child from the parent's HashMap
         // The .remove() method returns None if the key wasn't in the map
-        // .remove() will delete the node's children's also! Ideally, 
+        // .remove() will delete the node's children's also! Ideally,
         // we don't want this. Ideally, we want to prevent the deletion
         // for a node that still has children.
         if parent.children.remove(child_name).is_none() {

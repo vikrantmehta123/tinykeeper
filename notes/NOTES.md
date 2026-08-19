@@ -38,3 +38,26 @@ For example, the following are nodes in the data-store identified by their path:
 /clickhouse/tables/01/default/hits/replicas/r1/is_active
 /clickhouse/tables/01/default/hits/log/log-0000000042
 ```
+
+## Wire Protocol
+
+Think about how ClickHouse Keeper will work with ClickHouse Server.
+
+Typically, ClickHouse Servers will be running on a separate machine than the ClickHouse Keepers. So ClickHouse servers will act as clients to the Keepers.
+
+So Keepers and Servers have to communicate. Forget leader/slave/multi-master and what not for a moment. But there is a need for these two to communicate. That's why there needs to be a protocol.
+
+That protocol is a standard ZooKeeper protocol. It's called the "Wire Protocol". It's a binary protocol.
+
+We, as the writers of Keeper, we need to serve requests from the ClickHouse Server clients.
+
+The ZooKeeper protocol is detailed in this file [here](https://github.com/apache/zookeeper/blob/master/zookeeper-jute/src/main/resources/zookeeper.jute).
+
+Like HTTP has methods like GET or POST, ZooKeeper Wire Protocol also has different types of "requests". Each type of request is mapped to an integer code called "OpCode" or "type".
+
+The request looks something like this:
+
+1. First four bytes are for length of the request. This is the "Frame Length". 
+
+2. Then eight bytes are called RequestHeaders. First four bytes for xid, and another four bytes for type. Client generates the xid! We as Keeper authors, we don't generate the xid! We just read it and pass it back to the client. Note: zxid and xid are two different things.
+

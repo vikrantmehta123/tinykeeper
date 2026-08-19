@@ -1,11 +1,12 @@
 mod protocol;
 mod storage;
 mod znode;
+mod wal;
 
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 use crate::protocol::*;
 
@@ -15,12 +16,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("tinyKeeper is running on 127.0.0.1:2181");
 
     let global_storage = Arc::new(RwLock::new(storage::KeeperStorage::new()));
+    let global_wal = Arc::new(Mutex::new(wal::WalManager::new("tinykeeper.wal").await?));
 
     loop {
         let (mut socket, addr) = listener.accept().await?;
         println!("New client connected from: {}", addr);
 
         let client_storage = Arc::clone(&global_storage);
+        let client_wal = Arc::clone(&global_wal);
 
         tokio::spawn(async move {
             let mut length_buffer = [0u8; 4];
@@ -50,6 +53,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         match header.opcode {
                             1 => {
                                 if let Some(req) = protocol::CreateRequest::from_bytes(&mut buf) {
+                                    let mut wal = client_wal.lock().await;
+                                    let log_entry = wal::LogRecord::Create {
+                                        path: req.path.to_string(),
+                                        data: req.data.to_vec(),
+                                    };
+                                    if let Err(e) = wal.append(&log_entry).await {
+                                        println!("Failed to write to WAL: {}", e);
+                                        return;
+                                    }
+                                    drop(wal);
+
                                     let mut tree = client_storage.write().await;
 
                                     match tree.create(req.path, req.data.to_vec()) {
@@ -108,6 +122,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                             5 => {
                                 if let Some(req) = protocol::SetDataRequest::from_bytes(&mut buf) {
+                                    let mut wal = client_wal.lock().await;
+                                    let log_entry = wal::LogRecord::Set {
+                                        path: req.path.to_string(),
+                                        data: req.data.to_vec(),
+                                    };
+                                    if let Err(e) = wal.append(&log_entry).await {
+                                        println!("Failed to write to WAL: {}", e);
+                                        return;
+                                    }
+                                    drop(wal);
+
                                     let mut tree = client_storage.write().await;
                                     match tree.set(req.path, req.data.to_vec()) {
                                         Ok(_) => {
@@ -138,6 +163,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                             2 => {
                                 if let Some(req) = protocol::DeleteRequest::from_bytes(&mut buf) {
+                                    let mut wal = client_wal.lock().await;
+                                    let log_entry = wal::LogRecord::Delete {
+                                        path: req.path.to_string(),
+                                    };
+                                    if let Err(e) = wal.append(&log_entry).await {
+                                        println!("Failed to write to WAL: {}", e);
+                                        return;
+                                    }
+                                    drop(wal);
+
                                     let mut tree = client_storage.write().await;
                                     match tree.delete(req.path) {
                                         Ok(_) => {

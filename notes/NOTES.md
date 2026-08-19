@@ -47,7 +47,7 @@ Typically, ClickHouse Servers will be running on a separate machine than the Cli
 
 So Keepers and Servers have to communicate. Forget leader/slave/multi-master and what not for a moment. But there is a need for these two to communicate. That's why there needs to be a protocol.
 
-That protocol is a standard ZooKeeper protocol. It's called the "Wire Protocol". It's a binary protocol.
+That protocol is a standard ZooKeeper protocol. It's called the "Wire Protocol". It's a binary protocol. Both requests and responses have a protocol.
 
 We, as the writers of Keeper, we need to serve requests from the ClickHouse Server clients.
 

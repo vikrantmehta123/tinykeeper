@@ -72,6 +72,10 @@ impl KeeperStorage {
         }
     }
 
+    pub fn exists(&self, path: &str) -> bool {
+        self.get(path).is_ok()
+    }
+
     pub fn set(&mut self, path: &str, data: Vec<u8>) -> Result<(), &'static str> {
         match self.traverse_mut(path) {
             Some(node) => {

@@ -13,9 +13,16 @@ use crate::protocol::*;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let listener = TcpListener::bind("127.0.0.1:2181").await?;
-    println!("tinyKeeper is running on 127.0.0.1:2181");
+    println!("tinykeeper is running on 127.0.0.1:2181");
 
     let global_storage = Arc::new(RwLock::new(storage::KeeperStorage::new()));
+
+    // WAL Replay Phase
+    {
+        let mut tree = global_storage.write().await;
+        wal::WalManager::replay("tinykeeper.wal", &mut tree).await;
+    }
+
     let global_wal = Arc::new(Mutex::new(wal::WalManager::new("tinykeeper.wal").await?));
 
     loop {
@@ -53,6 +60,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         match header.opcode {
                             1 => {
                                 if let Some(req) = protocol::CreateRequest::from_bytes(&mut buf) {
+                                    // Brute Force: Get the tree lock early.
+                                    // TODO: In future, this should be pipelined
+                                    let mut tree = client_storage.write().await;
+
+                                    if tree.exists(req.path) {
+                                        let reply_header = ReplyHeader {
+                                            xid: header.xid,
+                                            zxid: 0,
+                                            err: -110, // ZooKeeper's official NodeExists error code
+                                        };
+                                        let payload = reply_header.to_bytes();
+                                        let len = payload.len() as i32;
+                                        let _ = socket.write_all(&len.to_be_bytes()).await;
+                                        let _ = socket.write_all(&payload).await;
+                                        return; // Exit early! Do NOT write to WAL and do NOT mutate the tree.
+                                    }
+
                                     let mut wal = client_wal.lock().await;
                                     let log_entry = wal::LogRecord::Create {
                                         path: req.path.to_string(),
@@ -62,9 +86,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         println!("Failed to write to WAL: {}", e);
                                         return;
                                     }
+                                    // Before we lock the tree, drop the WAL
+                                    // as WAL is slow due to fsync and we don't
+                                    // want other clients to keep on waiting
                                     drop(wal);
-
-                                    let mut tree = client_storage.write().await;
 
                                     match tree.create(req.path, req.data.to_vec()) {
                                         Ok(_) => {
@@ -122,6 +147,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                             5 => {
                                 if let Some(req) = protocol::SetDataRequest::from_bytes(&mut buf) {
+                                    // Brute Force: Get the tree lock early.
+                                    // TODO: In future, this should be pipelined
+                                    let mut tree = client_storage.write().await;
+
+                                    if !tree.exists(req.path) {
+                                        let reply_header = ReplyHeader {
+                                            xid: header.xid,
+                                            zxid: 0,
+                                            err: -101, // NoNode
+                                        };
+                                        let payload = reply_header.to_bytes();
+                                        let len = payload.len() as i32;
+                                        let _ = socket.write_all(&len.to_be_bytes()).await;
+                                        let _ = socket.write_all(&payload).await;
+                                        return;
+                                    }
+
                                     let mut wal = client_wal.lock().await;
                                     let log_entry = wal::LogRecord::Set {
                                         path: req.path.to_string(),
@@ -132,8 +174,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         return;
                                     }
                                     drop(wal);
-
-                                    let mut tree = client_storage.write().await;
                                     match tree.set(req.path, req.data.to_vec()) {
                                         Ok(_) => {
                                             let reply_header = ReplyHeader {
@@ -163,6 +203,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                             2 => {
                                 if let Some(req) = protocol::DeleteRequest::from_bytes(&mut buf) {
+                                    // Brute Force: Get the tree lock early.
+                                    // TODO: In future, this should be pipelined
+                                    let mut tree = client_storage.write().await;
+
+                                    if !tree.exists(req.path) {
+                                        let reply_header = ReplyHeader {
+                                            xid: header.xid,
+                                            zxid: 0,
+                                            err: -101, // NoNode
+                                        };
+                                        let payload = reply_header.to_bytes();
+                                        let len = payload.len() as i32;
+                                        let _ = socket.write_all(&len.to_be_bytes()).await;
+                                        let _ = socket.write_all(&payload).await;
+                                        return;
+                                    }
+
                                     let mut wal = client_wal.lock().await;
                                     let log_entry = wal::LogRecord::Delete {
                                         path: req.path.to_string(),
@@ -172,8 +229,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         return;
                                     }
                                     drop(wal);
-
-                                    let mut tree = client_storage.write().await;
                                     match tree.delete(req.path) {
                                         Ok(_) => {
                                             let reply_header = ReplyHeader {

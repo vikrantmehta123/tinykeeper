@@ -11,9 +11,15 @@ pub struct Config {
     pub storage_path: PathBuf,
 }
 
-fn default_host() -> String { "127.0.0.1".to_string() }
-fn default_port() -> u16 { 2181 }
-fn default_storage_path() -> PathBuf { PathBuf::from("./tinykeeper-data") }
+fn default_host() -> String {
+    "127.0.0.1".to_string()
+}
+fn default_port() -> u16 {
+    2181
+}
+fn default_storage_path() -> PathBuf {
+    PathBuf::from("./tinykeeper-data")
+}
 
 impl Default for Config {
     fn default() -> Self {

@@ -1,8 +1,9 @@
+mod config;
 mod protocol;
+mod server_uuid;
 mod storage;
 mod wal;
 mod znode;
-mod config;
 
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -87,7 +88,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         println!("Failed to write to WAL: {}", e);
                                         return;
                                     }
-                                    
+
                                     // Dropping the WAL doesn't do anything for us as yet. But
                                     // dropping it because it may be good practice to do so.
                                     drop(wal);

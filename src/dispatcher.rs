@@ -1,12 +1,16 @@
 use std::collections::HashMap;
+use std::sync::atomic::AtomicI64;
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
 use crate::keeper_server::KeeperServer;
+use crate::protocol::{ConnectRequest, ConnectResponse};
 
 pub struct KeeperDispatcher {
     server: Arc<KeeperServer>,
     // Session routing: structurally present, not implemented yet.
     _sessions: Mutex<HashMap<i64, ()>>,
+    next_session_id: AtomicI64,
 }
 
 impl KeeperDispatcher {
@@ -14,6 +18,7 @@ impl KeeperDispatcher {
         KeeperDispatcher {
             server,
             _sessions: Mutex::new(HashMap::new()),
+            next_session_id: AtomicI64::new(1),
         }
     }
 
@@ -23,6 +28,20 @@ impl KeeperDispatcher {
         let handle = tokio::spawn(async move { server.apply(&payload).await });
 
         handle.await.unwrap_or_default()
+    }
+
+    pub fn handshake(&self, request: ConnectRequest) -> ConnectResponse {
+        // TODO: real session resumption (matching request.session_id /
+        // request.password against a SessionTracker) is out of scope for
+        // now — every connect gets a fresh session id.
+        let session_id = self.next_session_id.fetch_add(1, Ordering::SeqCst);
+
+        ConnectResponse {
+            protocol_version: request.protocol_version,
+            timeout_ms: request.timeout_ms,
+            session_id,
+            password: Vec::new(), // TODO: no real auth yet
+        }
     }
 
     pub fn shutdown(&self) {

@@ -13,7 +13,11 @@ pub struct ConnectionHandler {
 }
 
 impl ConnectionHandler {
-    pub fn new(socket: TcpStream, dispatcher: Arc<KeeperDispatcher>, idle_timeout: Duration) -> Self {
+    pub fn new(
+        socket: TcpStream,
+        dispatcher: Arc<KeeperDispatcher>,
+        idle_timeout: Duration,
+    ) -> Self {
         ConnectionHandler {
             socket,
             dispatcher,
@@ -25,7 +29,12 @@ impl ConnectionHandler {
         loop {
             let mut length_buffer = [0u8; 4];
 
-            match tokio::time::timeout(self.idle_timeout, self.socket.read_exact(&mut length_buffer)).await {
+            match tokio::time::timeout(
+                self.idle_timeout,
+                self.socket.read_exact(&mut length_buffer),
+            )
+            .await
+            {
                 Ok(Ok(_)) => {}
                 Ok(Err(_)) => {
                     println!("Connection closed by client");
@@ -46,7 +55,12 @@ impl ConnectionHandler {
 
             let mut payload_buffer = vec![0u8; message_length as usize];
 
-            match tokio::time::timeout(self.idle_timeout, self.socket.read_exact(&mut payload_buffer)).await {
+            match tokio::time::timeout(
+                self.idle_timeout,
+                self.socket.read_exact(&mut payload_buffer),
+            )
+            .await
+            {
                 Ok(Ok(_)) => {}
                 Ok(Err(_)) => {
                     println!("Connection closed by client");
@@ -62,7 +76,12 @@ impl ConnectionHandler {
 
             if !response_payload.is_empty() {
                 let total_length = response_payload.len() as i32;
-                if self.socket.write_all(&total_length.to_be_bytes()).await.is_err() {
+                if self
+                    .socket
+                    .write_all(&total_length.to_be_bytes())
+                    .await
+                    .is_err()
+                {
                     return;
                 }
                 if self.socket.write_all(&response_payload).await.is_err() {

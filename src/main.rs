@@ -2,6 +2,7 @@ mod protocol;
 mod storage;
 mod wal;
 mod znode;
+mod config;
 
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

@@ -5,6 +5,7 @@ mod server_uuid;
 mod storage;
 mod wal;
 mod znode;
+mod dispatcher;
 
 use tokio::io::AsyncReadExt;
 use tokio::net::TcpListener;

@@ -1,4 +1,4 @@
-`tinyKeeper` is supposed to be a production-grade, Rust implementation of ClickHouse Keeper.
+`tinykeeper` is supposed to be a production-grade, Rust implementation of ClickHouse Keeper.
 
 ## Project Structure and Important Files
 

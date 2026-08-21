@@ -86,9 +86,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         println!("Failed to write to WAL: {}", e);
                                         return;
                                     }
-                                    // Before we lock the tree, drop the WAL
-                                    // as WAL is slow due to fsync and we don't
-                                    // want other clients to keep on waiting
+                                    
+                                    // Dropping the WAL doesn't do anything for us as yet. But
+                                    // dropping it because it may be good practice to do so.
                                     drop(wal);
 
                                     match tree.create(req.path, req.data.to_vec()) {

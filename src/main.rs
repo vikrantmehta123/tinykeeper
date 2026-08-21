@@ -1,4 +1,5 @@
 mod config;
+mod connection_handler;
 mod context;
 mod dispatcher;
 mod keeper_server;
@@ -9,11 +10,12 @@ mod wal;
 mod znode;
 
 use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
 use crate::config::Config;
+use crate::connection_handler::ConnectionHandler;
 use crate::context::KeeperContext;
 use crate::dispatcher::KeeperDispatcher;
 use crate::keeper_server::KeeperServer;
@@ -57,36 +59,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config.listen_host, config.tcp_port
     );
 
+    let idle_timeout = Duration::from_secs(config.idle_timeout_secs);
+
     // 7. Accept loop.
     loop {
-        let (mut socket, addr) = listener.accept().await?;
+        let (socket, addr) = listener.accept().await?;
         println!("New client connected from: {}", addr);
 
-        let client_dispatcher = Arc::clone(&dispatcher);
-
-        tokio::spawn(async move {
-            let mut length_buffer = [0u8; 4];
-
-            if socket.read_exact(&mut length_buffer).await.is_ok() {
-                let message_length = i32::from_be_bytes(length_buffer);
-
-                if !(0..=1_048_575).contains(&message_length) {
-                    println!("Message too large or invalid, dropping connection!");
-                    return;
-                }
-
-                let mut payload_buffer = vec![0u8; message_length as usize];
-
-                if socket.read_exact(&mut payload_buffer).await.is_ok() {
-                    let response_payload = client_dispatcher.dispatch(payload_buffer).await;
-
-                    if !response_payload.is_empty() {
-                        let total_length = response_payload.len() as i32;
-                        let _ = socket.write_all(&total_length.to_be_bytes()).await;
-                        let _ = socket.write_all(&response_payload).await;
-                    }
-                }
-            }
-        });
+        let handler = ConnectionHandler::new(socket, Arc::clone(&dispatcher), idle_timeout);
+        tokio::spawn(handler.run());
     }
 }

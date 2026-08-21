@@ -9,6 +9,8 @@ pub struct Config {
     pub tcp_port: u16,
     #[serde(default = "default_storage_path")]
     pub storage_path: PathBuf,
+    #[serde(default = "default_idle_timeout_secs")]
+    pub idle_timeout_secs: u64,
 }
 
 fn default_host() -> String {
@@ -21,12 +23,17 @@ fn default_storage_path() -> PathBuf {
     PathBuf::from("./tinykeeper-data")
 }
 
+fn default_idle_timeout_secs() -> u64 {
+    30
+}
+
 impl Default for Config {
     fn default() -> Self {
         Config {
             listen_host: default_host(),
             tcp_port: default_port(),
             storage_path: default_storage_path(),
+            idle_timeout_secs: default_idle_timeout_secs(),
         }
     }
 }
@@ -50,5 +57,6 @@ mod tests {
         assert_eq!(config.listen_host, "127.0.0.1");
         assert_eq!(config.tcp_port, 2181);
         assert_eq!(config.storage_path, PathBuf::from("./tinykeeper-data"));
+        assert_eq!(config.idle_timeout_secs, 30);
     }
 }

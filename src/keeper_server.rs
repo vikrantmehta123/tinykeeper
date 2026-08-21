@@ -21,12 +21,24 @@ impl KeeperServer {
         })
     }
 
-    pub async fn apply(&self, header: RequestHeader, buf: &mut &[u8]) -> Vec<u8> {
+    pub async fn apply(&self, payload: &[u8]) -> Vec<u8> {
+        if payload.len() < 8 {
+            println!("Message too short to be a standard request");
+            return Vec::new();
+        }
+
+        let mut buf = payload;
+        let header = RequestHeader::from_bytes(&mut buf);
+        println!(
+            "Parsed Header -> xid: {}, OpCode: {}",
+            header.xid, header.opcode
+        );
+
         match header.opcode {
-            1 => self.handle_create(header, buf).await,
-            4 => self.handle_get(header, buf).await,
-            5 => self.handle_set(header, buf).await,
-            2 => self.handle_delete(header, buf).await,
+            1 => self.handle_create(header, &mut buf).await,
+            4 => self.handle_get(header, &mut buf).await,
+            5 => self.handle_set(header, &mut buf).await,
+            2 => self.handle_delete(header, &mut buf).await,
             11 => {
                 // Ping response is just the header
                 let reply_header = ReplyHeader {

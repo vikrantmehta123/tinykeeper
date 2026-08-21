@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use crate::keeper_server::KeeperServer;
-use crate::protocol::RequestHeader;
 
 pub struct KeeperDispatcher {
     server: Arc<KeeperServer>,
@@ -18,13 +17,10 @@ impl KeeperDispatcher {
         }
     }
 
-    pub async fn dispatch(&self, header: RequestHeader, payload: Vec<u8>) -> Vec<u8> {
+    pub async fn dispatch(&self, payload: Vec<u8>) -> Vec<u8> {
         let server = Arc::clone(&self.server);
 
-        let handle = tokio::spawn(async move {
-            let mut buf = payload.as_slice();
-            server.apply(header, &mut buf).await
-        });
+        let handle = tokio::spawn(async move { server.apply(&payload).await });
 
         handle.await.unwrap_or_default()
     }
@@ -38,25 +34,23 @@ impl KeeperDispatcher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::RequestHeader;
 
     #[tokio::test]
     async fn dispatch_reaches_keeper_server_and_returns_response() {
-        let dir = std::env::temp_dir().join(format!(
-            "tinykeeper-dispatch-test-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("tinykeeper-dispatch-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let wal_path = dir.join("test.wal");
 
-        let server = Arc::new(
-            KeeperServer::new(wal_path.to_str().unwrap()).await.unwrap(),
-        );
+        let server = Arc::new(KeeperServer::new(wal_path.to_str().unwrap()).await.unwrap());
         let dispatcher = KeeperDispatcher::new(server);
 
-        // opcode 11 = ping, no payload needed.
-        let header = RequestHeader { xid: 42, opcode: 11 };
-        let response = dispatcher.dispatch(header, Vec::new()).await;
+        // xid=42 (4 bytes), opcode=11/ping (4 bytes), no body needed.
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&42i32.to_be_bytes());
+        payload.extend_from_slice(&11i32.to_be_bytes());
+
+        let response = dispatcher.dispatch(payload).await;
 
         // ReplyHeader is xid(4) + zxid(8) + err(4) = 16 bytes.
         assert_eq!(response.len(), 16);

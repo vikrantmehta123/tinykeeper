@@ -103,18 +103,6 @@ impl KeeperStorage {
         Ok(())
     }
 
-    pub fn get(&self, path: &str) -> Result<Vec<u8>, &'static str> {
-        match self.traverse(path) {
-            Some(node) => {
-                // If found, we must .clone() the data because our function
-                // signature promises to return an owned Vec<u8>, but `traverse`
-                // only gives us a borrowed reference (&ZNode).
-                Ok(node.data.clone())
-            }
-            None => Err("Node not found"),
-        }
-    }
-
     pub fn exists(&self, path: &str) -> bool {
         self.traverse(path).is_some()
     }

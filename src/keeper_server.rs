@@ -28,28 +28,26 @@ impl KeeperServer {
         }
 
         let mut buf = payload;
-        let header = RequestHeader::from_bytes(&mut buf);
+        let header = RequestHeader::from_bytes(&mut buf).expect("unknown opcode");
         println!(
-            "Parsed Header -> xid: {}, OpCode: {}",
+            "Parsed Header -> xid: {}, OpCode: {:?}",
             header.xid, header.opcode
         );
-
         match header.opcode {
-            1 => self.handle_create(header, &mut buf).await,
-            4 => self.handle_get(header, &mut buf).await,
-            5 => self.handle_set(header, &mut buf).await,
-            2 => self.handle_delete(header, &mut buf).await,
-            11 => {
-                // Ping response is just the header
+            OpCode::Create => self.handle_create(header, &mut buf).await,
+            OpCode::Get => self.handle_get(header, &mut buf).await,
+            OpCode::Set => self.handle_set(header, &mut buf).await,
+            OpCode::Remove => self.handle_delete(header, &mut buf).await,
+            OpCode::Heartbeat => {
                 let reply_header = ReplyHeader {
                     xid: header.xid,
                     zxid: 0,
-                    err: 0,
+                    err: ErrorCode::Ok,
                 };
                 reply_header.to_bytes()
             }
             _ => {
-                println!("Received unknown OpCode: {}", header.opcode);
+                println!("Received unimplemented OpCode: {:?}", header.opcode);
                 Vec::new()
             }
         }
@@ -69,7 +67,7 @@ impl KeeperServer {
             let reply_header = ReplyHeader {
                 xid: header.xid,
                 zxid: 0,
-                err: -110, // ZooKeeper's official NodeExists error code
+                err: ErrorCode::NodeExists, 
             };
             return reply_header.to_bytes(); // Exit early! Do NOT write to WAL and do NOT mutate the tree.
         }
@@ -93,7 +91,7 @@ impl KeeperServer {
                 let reply_header = ReplyHeader {
                     xid: header.xid,
                     zxid: 0, // temporary placeholder
-                    err: 0,  // no error
+                    err: ErrorCode::Ok, 
                 };
 
                 let create_res = CreateResponse { path: req.path };
@@ -119,7 +117,7 @@ impl KeeperServer {
                 let reply_header = ReplyHeader {
                     xid: header.xid,
                     zxid: 0,
-                    err: 0,
+                    err: ErrorCode::Ok,
                 };
                 let get_res = GetDataResponse {
                     data: &node.data,
@@ -133,7 +131,7 @@ impl KeeperServer {
                 let reply_header = ReplyHeader {
                     xid: header.xid,
                     zxid: 0,
-                    err: -101, // NoNode
+                    err: ErrorCode::NoNode,
                 };
                 reply_header.to_bytes()
             }
@@ -153,7 +151,7 @@ impl KeeperServer {
             let reply_header = ReplyHeader {
                 xid: header.xid,
                 zxid: 0,
-                err: -101, // NoNode
+                err: ErrorCode::NoNode,
             };
             return reply_header.to_bytes();
         }
@@ -175,7 +173,7 @@ impl KeeperServer {
                 let reply_header = ReplyHeader {
                     xid: header.xid,
                     zxid: 0,
-                    err: 0,
+                    err: ErrorCode::Ok,
                 };
                 let set_res = SetDataResponse { stat: &node.stat };
                 let mut payload = reply_header.to_bytes();
@@ -187,7 +185,7 @@ impl KeeperServer {
                 let reply_header = ReplyHeader {
                     xid: header.xid,
                     zxid: 0,
-                    err: -101,
+                    err: ErrorCode::NoNode,
                 };
                 reply_header.to_bytes()
             }
@@ -207,7 +205,7 @@ impl KeeperServer {
             let reply_header = ReplyHeader {
                 xid: header.xid,
                 zxid: 0,
-                err: -101, // NoNode
+                err: ErrorCode::NoNode,
             };
             return reply_header.to_bytes();
         }
@@ -227,7 +225,7 @@ impl KeeperServer {
                 let reply_header = ReplyHeader {
                     xid: header.xid,
                     zxid: 0,
-                    err: 0,
+                    err: ErrorCode::Ok,
                 };
                 let mut payload = reply_header.to_bytes();
                 payload.extend(EmptyResponse.to_bytes());
@@ -237,7 +235,7 @@ impl KeeperServer {
                 let reply_header = ReplyHeader {
                     xid: header.xid,
                     zxid: 0,
-                    err: -101,
+                    err: ErrorCode::NoNode,
                 };
                 reply_header.to_bytes()
             }

@@ -1,5 +1,72 @@
 use bytes::Buf;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OpCode {
+    Close = -11,
+    Create = 1,
+    Remove = 2,
+    Exists = 3,
+    Get = 4,
+    Set = 5,
+    GetACL = 6,
+    SetACL = 7,
+    SimpleList = 8,
+    Sync = 9,
+    Heartbeat = 11,
+    List = 12,
+    Check = 13,
+    Multi = 14,
+    Create2 = 15,
+    Reconfig = 16,
+    CheckWatch = 17,
+    RemoveWatch = 18,
+    MultiRead = 22,
+    Auth = 100,
+    SetWatch = 101,
+    SetWatch2 = 105,
+    AddWatch = 106,
+}
+
+impl TryFrom<i32> for OpCode {
+    type Error = i32;
+
+    fn try_from(value: i32) -> Result<OpCode, i32> {
+        match value {
+            -11 => Ok(OpCode::Close),
+            1 => Ok(OpCode::Create),
+            2 => Ok(OpCode::Remove),
+            3 => Ok(OpCode::Exists),
+            4 => Ok(OpCode::Get),
+            5 => Ok(OpCode::Set),
+            6 => Ok(OpCode::GetACL),
+            7 => Ok(OpCode::SetACL),
+            8 => Ok(OpCode::SimpleList),
+            9 => Ok(OpCode::Sync),
+            11 => Ok(OpCode::Heartbeat),
+            12 => Ok(OpCode::List),
+            13 => Ok(OpCode::Check),
+            14 => Ok(OpCode::Multi),
+            15 => Ok(OpCode::Create2),
+            16 => Ok(OpCode::Reconfig),
+            17 => Ok(OpCode::CheckWatch),
+            18 => Ok(OpCode::RemoveWatch),
+            22 => Ok(OpCode::MultiRead),
+            100 => Ok(OpCode::Auth),
+            101 => Ok(OpCode::SetWatch),
+            105 => Ok(OpCode::SetWatch2),
+            106 => Ok(OpCode::AddWatch),
+            other => Err(other),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ErrorCode {
+    Ok = 0,
+    NoNode = -101,
+    NodeExists = -110,
+}
+
 /// The ZooKeeper wire format specifies a Stat struct
 /// The fields in the Stat struct need to be in a specified
 /// order. Those fields are defined below in their appropriate order
@@ -45,15 +112,15 @@ impl Stat {
 
 pub struct RequestHeader {
     pub xid: i32,
-    pub opcode: i32,
+    pub opcode: OpCode,
 }
 
 impl RequestHeader {
-    // We pass a mutable reference to the slice so we can advance the cursor
-    pub fn from_bytes(buf: &mut &[u8]) -> Self {
+    pub fn from_bytes(buf: &mut &[u8]) -> Result<Self, i32> {
         let xid = buf.get_i32();
-        let opcode = buf.get_i32();
-        Self { xid, opcode }
+        let raw_opcode = buf.get_i32();
+        let opcode = OpCode::try_from(raw_opcode)?;
+        Ok(Self { xid, opcode })
     }
 }
 
@@ -85,7 +152,7 @@ impl<'a> CreateRequest<'a> {
 pub struct ReplyHeader {
     pub xid: i32,
     pub zxid: i64, // Note: zxid is 8-bytes!
-    pub err: i32,
+    pub err: ErrorCode,
 }
 impl ReplyHeader {
     pub fn to_bytes(&self) -> Vec<u8> {
@@ -93,7 +160,7 @@ impl ReplyHeader {
         // Convert our integers to big-endian bytes and append them
         buf.extend_from_slice(&self.xid.to_be_bytes());
         buf.extend_from_slice(&self.zxid.to_be_bytes());
-        buf.extend_from_slice(&self.err.to_be_bytes());
+        buf.extend_from_slice(&(self.err as i32).to_be_bytes());
         buf
     }
 }

@@ -310,6 +310,26 @@ impl ConnectResponse {
     }
 }
 
+pub struct GetChildrenRequest<'a> {
+    pub path: &'a str,
+
+    // For v1, this is not going to matter much
+    // For v2, we will be using this.
+    pub watch: bool,
+}
+
+impl<'a> GetChildrenRequest<'a> {
+    pub fn from_bytes(buf: &mut &'a [u8]) -> Option<Self> {
+        let path_len = buf.get_i32() as usize;
+        let (path_bytes, remaining) = buf.split_at(path_len);
+        let path = std::str::from_utf8(path_bytes).ok()?;
+        *buf = remaining;
+        let watch = buf.get_u8() != 0;
+
+        Some(Self { path, watch })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

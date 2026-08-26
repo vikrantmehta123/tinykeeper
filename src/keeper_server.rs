@@ -46,9 +46,44 @@ impl KeeperServer {
                 };
                 reply_header.to_bytes()
             }
+            OpCode::List => self.handle_get_children(header, &mut buf).await,
             _ => {
                 println!("Received unimplemented OpCode: {:?}", header.opcode);
                 Vec::new()
+            }
+        }
+    }
+
+    async fn handle_get_children(&self, header: RequestHeader, buf: &mut &[u8]) -> Vec<u8> {
+        let Some(req) = GetChildrenRequest::from_bytes(buf) else {
+            return Vec::new();
+        };
+        let tree = self.storage.read().await;
+        match tree.traverse(req.path) {
+            Some(node) => {
+                let reply_header = ReplyHeader {
+                    xid: header.xid,
+                    zxid: 0,
+                    err: ErrorCode::Ok,
+                };
+                let mut children: Vec<&String> = node.children.keys().collect();
+                children.sort();
+
+                let mut payload = reply_header.to_bytes();
+                payload.extend_from_slice(&(children.len() as i32).to_be_bytes());
+                for name in children {
+                    payload.extend_from_slice(&(name.len() as i32).to_be_bytes());
+                    payload.extend_from_slice(name.as_bytes());
+                }
+                payload
+            }
+            None => {
+                let reply_header = ReplyHeader {
+                    xid: header.xid,
+                    zxid: 0,
+                    err: ErrorCode::NoNode,
+                };
+                reply_header.to_bytes()
             }
         }
     }
@@ -67,7 +102,7 @@ impl KeeperServer {
             let reply_header = ReplyHeader {
                 xid: header.xid,
                 zxid: 0,
-                err: ErrorCode::NodeExists, 
+                err: ErrorCode::NodeExists,
             };
             return reply_header.to_bytes(); // Exit early! Do NOT write to WAL and do NOT mutate the tree.
         }
@@ -91,7 +126,7 @@ impl KeeperServer {
                 let reply_header = ReplyHeader {
                     xid: header.xid,
                     zxid: 0, // temporary placeholder
-                    err: ErrorCode::Ok, 
+                    err: ErrorCode::Ok,
                 };
 
                 let create_res = CreateResponse { path: req.path };

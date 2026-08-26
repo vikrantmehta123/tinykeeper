@@ -47,9 +47,38 @@ impl KeeperServer {
                 reply_header.to_bytes()
             }
             OpCode::List => self.handle_get_children(header, &mut buf).await,
+            OpCode::Exists => self.handle_exists(header, &mut buf).await,
             _ => {
                 println!("Received unimplemented OpCode: {:?}", header.opcode);
                 Vec::new()
+            }
+        }
+    }
+    async fn handle_exists(&self, header: RequestHeader, buf: &mut &[u8]) -> Vec<u8> {
+        let Some(req) = ExistsRequest::from_bytes(buf) else {
+            return Vec::new();
+        };
+
+        let tree = self.storage.read().await;
+        match tree.traverse(req.path) {
+            Some(node) => {
+                let reply_header = ReplyHeader {
+                    xid: header.xid,
+                    zxid: 0,
+                    err: ErrorCode::Ok,
+                };
+                let res = ExistsResponse { stat: &node.stat };
+                let mut payload = reply_header.to_bytes();
+                payload.extend(res.to_bytes(node.data.len() as i32, node.children.len() as i32));
+                payload
+            }
+            None => {
+                let reply_header = ReplyHeader {
+                    xid: header.xid,
+                    zxid: 0,
+                    err: ErrorCode::NoNode,
+                };
+                reply_header.to_bytes()
             }
         }
     }
@@ -70,11 +99,11 @@ impl KeeperServer {
                 children.sort();
 
                 let mut payload = reply_header.to_bytes();
-                payload.extend_from_slice(&(children.len() as i32).to_be_bytes());
-                for name in children {
-                    payload.extend_from_slice(&(name.len() as i32).to_be_bytes());
-                    payload.extend_from_slice(name.as_bytes());
-                }
+
+                let res = GetChildrenResponse {
+                    children: &children,
+                };
+                payload.extend(res.to_bytes());
                 payload
             }
             None => {

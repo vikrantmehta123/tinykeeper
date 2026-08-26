@@ -330,6 +330,49 @@ impl<'a> GetChildrenRequest<'a> {
     }
 }
 
+pub struct GetChildrenResponse<'a> {
+    pub children: &'a [&'a String],
+}
+
+impl<'a> GetChildrenResponse<'a> {
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&(self.children.len() as i32).to_be_bytes());
+        for name in self.children {
+            buf.extend_from_slice(&(name.len() as i32).to_be_bytes());
+            buf.extend_from_slice(name.as_bytes());
+        }
+        buf
+    }
+}
+
+pub struct ExistsRequest<'a> {
+    pub path: &'a str,
+    pub watch: bool,
+}
+
+impl<'a> ExistsRequest<'a> {
+    pub fn from_bytes(buf: &mut &'a [u8]) -> Option<Self> {
+        let path_len = buf.get_i32() as usize;
+        let (path_bytes, remaining) = buf.split_at(path_len);
+        let path = std::str::from_utf8(path_bytes).ok()?;
+        *buf = remaining;
+        let watch = buf.get_u8() != 0;
+
+        Some(Self { path, watch })
+    }
+}
+
+pub struct ExistsResponse<'a> {
+    pub stat: &'a Stat,
+}
+
+impl<'a> ExistsResponse<'a> {
+    pub fn to_bytes(&self, data_length: i32, num_children: i32) -> Vec<u8> {
+        self.stat.to_bytes(data_length, num_children)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

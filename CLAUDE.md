@@ -30,3 +30,8 @@ The goals of this project are the following:
 * Think small. Don't dump everything at once. Think in small sections. Focus on clarity.
 * In terms of code design, focus on idiomatic Rust patterns and design patterns suggested in `Philosophy of Software Design`.
 * We develop this project in three versions. The third version is supposed to be usable. The earlier versions are smaller milestones to that goal. Currently, we are working towards the first version of the project.
+
+## Expected End Goal for First Version 
+
+* A correct, complete single-node implementation of ZooKeeper. A real client like zkCli.sh should be able to connect to our server
+

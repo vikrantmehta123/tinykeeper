@@ -30,7 +30,9 @@ impl ConnectionHandler {
 
     pub async fn run(mut self) {
         let mut first_bytes = [0u8; 4];
-        match tokio::time::timeout(self.idle_timeout, self.socket.read_exact(&mut first_bytes)).await {
+        match tokio::time::timeout(self.idle_timeout, self.socket.read_exact(&mut first_bytes))
+            .await
+        {
             Ok(Ok(_)) => {}
             Ok(Err(_)) => {
                 println!("Connection closed by client");
@@ -78,21 +80,25 @@ impl ConnectionHandler {
             println!("Failed to parse ConnectRequest");
             return;
         };
-    
+
         let connect_response: ConnectResponse = self.dispatcher.handshake(connect_request);
         self.session_id = Some(connect_response.session_id);
-    
+
         let response_bytes = connect_response.to_bytes();
         let total_length = response_bytes.len() as i32;
-        if self.socket.write_all(&total_length.to_be_bytes()).await.is_err() {
+        if self
+            .socket
+            .write_all(&total_length.to_be_bytes())
+            .await
+            .is_err()
+        {
             return;
         }
         if self.socket.write_all(&response_bytes).await.is_err() {
             return;
         }
-    
-        println!("Handshake complete, session_id: {:?}", self.session_id);
 
+        println!("Handshake complete, session_id: {:?}", self.session_id);
 
         loop {
             let mut length_buffer = [0u8; 4];

@@ -53,11 +53,61 @@ We, as the writers of Keeper, we need to serve requests from the ClickHouse Serv
 
 The ZooKeeper protocol is detailed in this file [here](https://github.com/apache/zookeeper/blob/master/zookeeper-jute/src/main/resources/zookeeper.jute).
 
+ZooKeeper itself is a protocol over TCP, like HTTP. We don't send ZooKeeper requests/responses over HTTP. Since ZooKeeper is a protocol of its own, it also has some handshake, etc.
+
 Like HTTP has methods like GET or POST, ZooKeeper Wire Protocol also has different types of "requests". Each type of request is mapped to an integer code called "OpCode" or "type".
 
-The request looks something like this:
+The wire protocol can be summarized as below:
 
-1. First four bytes are for length of the request. This is the "Frame Length". 
+```
+CLIENT → SERVER  (handshake):
+  [int32] packet length
+  [int32] protocol version
+  [int64] last zxid seen
+  [int32] timeout ms
+  [int64] previous session id
+  [bytes] password (fixed 16 bytes)
 
-2. Then eight bytes are called RequestHeaders. First four bytes for xid, and another four bytes for type. Client generates the xid! We as Keeper authors, we don't generate the xid! We just read it and pass it back to the client. Note: zxid and xid are two different things.
+SERVER → CLIENT  (handshake response):
+  [int32] packet length
+  [int32] protocol version
+  [int32] negotiated timeout ms
+  [int64] assigned session id
+  [bytes] password echo
+
+CLIENT → SERVER  (each request):
+  [int32] packet length
+  [int32/64] XID
+  [int32] opcode
+  [variable] opcode payload
+
+SERVER → CLIENT  (each response):
+  [int32] packet length
+  [int32/64] XID (matches the request)
+  [int64] zxid (transaction ID assigned by Raft)
+  [int32] error code
+  [variable] opcode payload
+```
+
+## KeeperStateMachine and the LogEntry
+
+This is not really a state machine in the FSM sense of the word. The terminology comes from the Raft paper. 
+
+It doesn't mean an FSM but a Replicated State Machine. The idea is following:
+
+```text
+If you start multiple machines in the same initial state, and feed them the same sequence of operations in the same order, they will all end up in the same state.
+```
+
+* "state" is the entire ZooKeeper data tree at any given point of time.
+* "operations" correspond to ZooKeeper commands.
+* "machine" is the code that we write (i.e. the Keeper), which applies those operations deterministically.
+
+So think about the division of responsibility here:
+* Raft tells each Keeper node what log entries to apply and in what order. So Raft is guaranteeing that each Keeper node will see the same log entries and in the same order.
+* The Keeper State Machine is just the code that actually applies those log entries deterministically.
+
+And what are the Log Entries? 
+* The log entries are simply the ZooKeeper commands with their log index, parameters and payload.
+* Since the log entries need to be ordered, we need a log index. This is the zxid.
 

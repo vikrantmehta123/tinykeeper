@@ -1,5 +1,48 @@
 use bytes::Buf;
 
+/// The ZooKeeper wire format specifies a Stat struct
+/// The fields in the Stat struct need to be in a specified
+/// order. Those fields are defined below in their appropriate order
+/// Note that there are two more fields called data_length and
+/// num_children in the protocol. We don't define them in the struct.
+/// data_length: i32,     // byte length of node's data
+/// num_childnre: i32     // number of direct children
+/// Those fields can be computed- so they are not defined here.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Stat {
+    pub czxid: i64,           // creation zxid
+    pub mzxid: i64,           // last modified zxid
+    pub ctime: i64,           // creation time (in ms since epoch)
+    pub mtime: i64,           // last modification time (ms since epoch)
+    pub version: i32,         // How many times has data been written?
+    pub cversion: i32,        // how many times have children changed?
+    pub aversion: i32,        // how many times did ACL change?
+    pub ephemeral_owner: i64, // session_id if ephemeral node, else 0
+
+    // data_length and num_children go here, before pzxid
+    pub pzxid: i64, // zxid of the last children change
+}
+
+impl Stat {
+    pub fn to_bytes(&self, data_length: i32, num_children: i32) -> Vec<u8> {
+        // As per the protocol, the Stat is always 68 bytes
+        let mut buf: Vec<u8> = Vec::with_capacity(68);
+        buf.extend_from_slice(&self.czxid.to_be_bytes());
+        buf.extend_from_slice(&self.mzxid.to_be_bytes());
+        buf.extend_from_slice(&self.ctime.to_be_bytes());
+        buf.extend_from_slice(&self.mtime.to_be_bytes());
+        buf.extend_from_slice(&self.version.to_be_bytes());
+        buf.extend_from_slice(&self.cversion.to_be_bytes());
+        buf.extend_from_slice(&self.aversion.to_be_bytes());
+        buf.extend_from_slice(&self.ephemeral_owner.to_be_bytes());
+        buf.extend_from_slice(&data_length.to_be_bytes());
+        buf.extend_from_slice(&num_children.to_be_bytes());
+        buf.extend_from_slice(&self.pzxid.to_be_bytes());
+
+        buf
+    }
+}
+
 pub struct RequestHeader {
     pub xid: i32,
     pub opcode: i32,

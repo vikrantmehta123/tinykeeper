@@ -134,14 +134,18 @@ impl<'a> GetDataRequest<'a> {
     }
 }
 
-pub struct GetDataResponse {
-    pub data: Vec<u8>,
+pub struct GetDataResponse<'a> {
+    pub data: &'a [u8],
+    pub stat: &'a Stat,
 }
-impl GetDataResponse {
-    pub fn to_bytes(&self) -> Vec<u8> {
+
+impl<'a> GetDataResponse<'a> {
+    pub fn to_bytes(&self, num_children: i32) -> Vec<u8> {
         let mut buf = Vec::new();
         buf.extend_from_slice(&(self.data.len() as i32).to_be_bytes());
-        buf.extend_from_slice(&self.data);
+        buf.extend_from_slice(self.data);
+
+        buf.extend(self.stat.to_bytes(self.data.len() as i32, num_children));
         buf
     }
 }
@@ -161,6 +165,16 @@ impl<'a> SetDataRequest<'a> {
         let (data, remaining) = buf.split_at(data_len);
         *buf = remaining;
         Some(Self { path, data })
+    }
+}
+
+pub struct SetDataResponse<'a> {
+    pub stat: &'a Stat,
+}
+
+impl<'a> SetDataResponse<'a> {
+    pub fn to_bytes(&self, data_length: i32, num_children: i32) -> Vec<u8> {
+        self.stat.to_bytes(data_length, num_children)
     }
 }
 

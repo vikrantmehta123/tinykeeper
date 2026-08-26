@@ -114,19 +114,22 @@ impl KeeperServer {
         };
 
         let tree = self.storage.read().await;
-        match tree.get(req.path) {
-            Ok(data) => {
+        match tree.traverse(req.path) {
+            Some(node) => {
                 let reply_header = ReplyHeader {
                     xid: header.xid,
                     zxid: 0,
                     err: 0,
                 };
-                let get_res = GetDataResponse { data };
+                let get_res = GetDataResponse {
+                    data: &node.data,
+                    stat: &node.stat,
+                };
                 let mut payload = reply_header.to_bytes();
-                payload.extend(get_res.to_bytes());
+                payload.extend(get_res.to_bytes(node.children.len() as i32));
                 payload
             }
-            Err(_) => {
+            None => {
                 let reply_header = ReplyHeader {
                     xid: header.xid,
                     zxid: 0,
@@ -168,13 +171,16 @@ impl KeeperServer {
 
         match tree.set(req.path, req.data.to_vec()) {
             Ok(_) => {
+                let node = tree.traverse(req.path).unwrap();
                 let reply_header = ReplyHeader {
                     xid: header.xid,
                     zxid: 0,
                     err: 0,
                 };
+                let set_res = SetDataResponse { stat: &node.stat };
                 let mut payload = reply_header.to_bytes();
-                payload.extend(EmptyResponse.to_bytes());
+                payload
+                    .extend(set_res.to_bytes(node.data.len() as i32, node.children.len() as i32));
                 payload
             }
             Err(_) => {

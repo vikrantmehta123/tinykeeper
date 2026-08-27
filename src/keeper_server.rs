@@ -1,9 +1,9 @@
 use tokio::sync::{Mutex, RwLock};
 
-use serde::{Serialize, Deserialize};
+use crate::changelog::WalStore;
 use crate::protocol::*;
 use crate::storage::KeeperStorage;
-use crate::changelog::WalStore;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 #[derive(Serialize, Deserialize)]
@@ -31,19 +31,26 @@ pub struct KeeperServer {
 impl KeeperServer {
     pub async fn new(wal_dir: &Path) -> Result<Self, Box<dyn std::error::Error>> {
         let mut storage = KeeperStorage::new();
-    
+
         let wal = WalStore::open(wal_dir, 50 * 1024 * 1024).await?;
-    
+
         wal.replay(|_index, _term, payload| {
             if let Some(op) = WalOperation::deserialize(&payload) {
                 match op {
-                    WalOperation::Create { path, data } => { let _ = storage.create(&path, data); }
-                    WalOperation::Set { path, data } => { let _ = storage.set(&path, data); }
-                    WalOperation::Delete { path } => { let _ = storage.delete(&path); }
+                    WalOperation::Create { path, data } => {
+                        let _ = storage.create(&path, data);
+                    }
+                    WalOperation::Set { path, data } => {
+                        let _ = storage.set(&path, data);
+                    }
+                    WalOperation::Delete { path } => {
+                        let _ = storage.delete(&path);
+                    }
                 }
             }
-        }).await?;
-    
+        })
+        .await?;
+
         Ok(KeeperServer {
             storage: RwLock::new(storage),
             wal: Mutex::new(wal),
@@ -270,7 +277,7 @@ impl KeeperServer {
             data: req.data.to_vec(),
         };
         let payload = op.serialize();
-        
+
         let mut wal = self.wal.lock().await;
         wal.append(1, 0, 0, 0, &payload);
         if let Err(e) = wal.flush().await {
@@ -338,7 +345,7 @@ impl KeeperServer {
             path: req.path.to_string(),
         };
         let payload = op.serialize();
-        
+
         let mut wal = self.wal.lock().await;
         wal.append(1, 0, 0, 0, &payload);
         if let Err(e) = wal.flush().await {

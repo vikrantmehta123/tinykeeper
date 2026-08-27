@@ -1,6 +1,6 @@
-//! SegmentWriter 
+//! SegmentWriter
 //!
-//! A segment is one WAL file. Instead of one ever-growing file, 
+//! A segment is one WAL file. Instead of one ever-growing file,
 //! the WAL is split into multiple files. Each one is a segment.
 //!
 //! Each segment covers a range of log indices. Typically, we define
@@ -13,9 +13,9 @@
 //! SegmentWriter knows three things:
 //! * A file handle — the one open segment it's writing to
 //! * A buffer — where encode puts bytes before they hit disk
-//! * How to flush — write the buffer to the file, fsync 
+//! * How to flush — write the buffer to the file, fsync
 //!
-//! It doesn't know how to interpret the byte buffer, segment file rotation, 
+//! It doesn't know how to interpret the byte buffer, segment file rotation,
 //! compaction, or even file names.
 
 use bytes::BytesMut;

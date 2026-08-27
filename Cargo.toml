@@ -11,3 +11,4 @@ serde = { version = "1.0.229", features = ["derive"] }
 tokio = { version = "1.53.1", features = ["full"] }
 uuid = { version = "1", features = ["v4"] }
 toml = "1.1"
+cityhash-rs = "1.0.1"

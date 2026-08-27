@@ -64,6 +64,7 @@ impl TryFrom<i32> for OpCode {
 pub enum ErrorCode {
     Ok = 0,
     NoNode = -101,
+    BadVersion = -103,
     NodeExists = -110,
 }
 
@@ -220,6 +221,7 @@ impl<'a> GetDataResponse<'a> {
 pub struct SetDataRequest<'a> {
     pub path: &'a str,
     pub data: &'a [u8],
+    pub version: i32,
 }
 impl<'a> SetDataRequest<'a> {
     pub fn from_bytes(buf: &mut &'a [u8]) -> Option<Self> {
@@ -231,7 +233,13 @@ impl<'a> SetDataRequest<'a> {
         let data_len = buf.get_i32() as usize;
         let (data, remaining) = buf.split_at(data_len);
         *buf = remaining;
-        Some(Self { path, data })
+
+        let version = buf.get_i32();
+        Some(Self {
+            path,
+            data,
+            version,
+        })
     }
 }
 
@@ -247,6 +255,7 @@ impl<'a> SetDataResponse<'a> {
 
 pub struct DeleteRequest<'a> {
     pub path: &'a str,
+    pub version: i32,
 }
 impl<'a> DeleteRequest<'a> {
     pub fn from_bytes(buf: &mut &'a [u8]) -> Option<Self> {
@@ -254,7 +263,9 @@ impl<'a> DeleteRequest<'a> {
         let (path_bytes, remaining) = buf.split_at(path_len);
         let path = std::str::from_utf8(path_bytes).ok()?;
         *buf = remaining;
-        Some(Self { path })
+
+        let version = buf.get_i32();
+        Some(Self { path, version })
     }
 }
 

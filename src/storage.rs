@@ -1,85 +1,61 @@
 use crate::protocol::Stat;
-use crate::znode::ZNode;
-use std::collections::HashMap;
+use crate::znode::Node;
+use std::collections::{HashMap, HashSet};
 use std::time::SystemTime;
 
 pub struct KeeperStorage {
-    root: ZNode,
+    map: HashMap<String, Node>,
 }
 
 impl KeeperStorage {
     pub fn new() -> Self {
-        KeeperStorage {
-            // The root node is basically a sentinel.
-            // We can put all values as zeros as defaults here.
-            root: ZNode {
+        let mut map = HashMap::new();
+        map.insert(
+            "/".to_string(),
+            Node {
                 data: Vec::new(),
-                children: HashMap::new(),
+                children: HashSet::new(),
                 stat: Stat::default(),
             },
-        }
-    }
-
-    pub fn traverse(&self, path: &str) -> Option<&ZNode> {
-        let segments = path.split("/").filter(|s| !s.is_empty());
-
-        let mut current_root = &self.root;
-        for part in segments {
-            let child = current_root.children.get(part)?;
-            current_root = child;
-        }
-        Some(current_root)
-    }
-
-    pub fn traverse_mut(&mut self, path: &str) -> Option<&mut ZNode> {
-        let segments = path.split("/").filter(|s| !s.is_empty());
-
-        let mut current_root = &mut self.root;
-        for part in segments {
-            let child = current_root.children.get_mut(part)?;
-            current_root = child;
-        }
-
-        Some(current_root)
+        );
+        KeeperStorage { map }
     }
 
     pub fn create(&mut self, path: &str, data: Vec<u8>) -> Result<(), &'static str> {
         let (parent_path, child_name) = match path.rsplit_once("/") {
             Some((p, c)) => (p, c),
-            None => return Err("Invalid path format. No child found"),
+            None => return Err("Invalid path format"),
         };
 
-        // Prevent trying to recreate the root node (e.g., path == "/")
         if child_name.is_empty() {
             return Err("Cannot create root node");
         }
 
-        let parent = match self.traverse_mut(parent_path) {
-            Some(p) => p,
-            None => return Err("Parent node does not exist"),
+        let parent_path = if parent_path.is_empty() {
+            "/"
+        } else {
+            parent_path
         };
 
-        if parent.children.contains_key(child_name) {
+        if !self.map.contains_key(parent_path) {
+            return Err("Parent node does not exist");
+        }
+
+        if self.map.contains_key(path) {
             return Err("Node already exists");
         }
 
-        // TODO: We don't yet have the czxid counter yet. We keep it as a
-        // placeholder for now. czxid is the global counter on KeeperServer.
-        // Every write operation increments it. Once that is built, we need
-        // to change this.
-        let czxid = 0i64;
-
-        // TODO: In a real distributed setup, we can't take local time. We need
-        // to agree on the time across nodes also! For v1, this is fine. But we
-        // need to revisit this once we are starting work for v2.
         let now = SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_millis() as i64;
 
-        let newnode = ZNode {
+        // TODO: Placeholder zxid. Fix it once you have atomic counter
+        let czxid = 0i64;
+
+        let new_node = Node {
             data,
-            children: HashMap::new(),
+            children: HashSet::new(),
             stat: Stat {
                 czxid,
                 mzxid: czxid,
@@ -93,32 +69,40 @@ impl KeeperStorage {
             },
         };
 
-        parent.children.insert(child_name.to_string(), newnode);
+        // Mutation 1: insert the new node
+        self.map.insert(path.to_string(), new_node);
 
+        // Mutation 2: update the parent
+        let parent = self.map.get_mut(parent_path).unwrap();
+        parent.children.insert(child_name.to_string());
         parent.stat.cversion += 1;
-
-        // TODO: Need to change this when we add zxid counter
-        parent.stat.pzxid = 0;
+        parent.stat.pzxid = 0; // TODO: Update this once atomic counting zxid is there
 
         Ok(())
     }
 
+    pub fn traverse(&self, path: &str) -> Option<&Node> {
+        self.map.get(path)
+    }
+
+    pub fn traverse_mut(&mut self, path: &str) -> Option<&mut Node> {
+        self.map.get_mut(path)
+    }
+
     pub fn exists(&self, path: &str) -> bool {
-        self.traverse(path).is_some()
+        self.map.contains_key(path)
     }
 
     pub fn set(&mut self, path: &str, data: Vec<u8>) -> Result<(), &'static str> {
-        match self.traverse_mut(path) {
+        match self.map.get_mut(path) {
             Some(node) => {
                 // TODO: This needs to change in v2. We can't take local time.
-                // For v1, this is fine
                 let now = SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
                     .as_millis() as i64;
 
                 node.stat.version += 1;
-
                 // TODO: When zxid counter logic is added, change this.
                 node.stat.mzxid = 0;
                 node.stat.mtime = now;
@@ -131,33 +115,37 @@ impl KeeperStorage {
     }
 
     pub fn delete(&mut self, path: &str) -> Result<(), &'static str> {
-        // Split the path just like in create
         let (parent_path, child_name) = match path.rsplit_once("/") {
             Some((p, c)) => (p, c),
-            None => return Err("Invalid path format. No child found"),
+            None => return Err("Invalid path format"),
         };
 
         if child_name.is_empty() {
             return Err("Cannot delete root node");
         }
 
-        // Find the mutable parent node
-        let parent = match self.traverse_mut(parent_path) {
-            Some(p) => p,
-            None => return Err("Parent node does not exist"),
+        let parent_path = if parent_path.is_empty() {
+            "/"
+        } else {
+            parent_path
         };
 
-        // Remove the child from the parent's HashMap
-        // The .remove() method returns None if the key wasn't in the map
-        // .remove() will delete the node's children's also! Ideally,
-        // we don't want this. Ideally, we want to prevent the deletion
-        // for a node that still has children.
-        if parent.children.remove(child_name).is_none() {
-            return Err("Node not found");
+        match self.map.get(path) {
+            Some(node) => {
+                if !node.children.is_empty() {
+                    return Err("Node has children");
+                }
+            }
+            None => return Err("Node not found"),
         }
 
-        parent.stat.cversion += 1;
+        // Mutation 1: remove the node
+        self.map.remove(path);
 
+        // Mutation 2: update the parent
+        let parent = self.map.get_mut(parent_path).unwrap();
+        parent.children.remove(child_name);
+        parent.stat.cversion += 1;
         // TODO: Need to change this when we add zxid counter
         parent.stat.pzxid = 0;
 

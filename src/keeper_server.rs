@@ -131,7 +131,8 @@ impl KeeperServer {
                     zxid: 0,
                     err: ErrorCode::Ok,
                 };
-                let mut children: Vec<&String> = node.children.keys().collect();
+
+                let mut children: Vec<&String> = node.children.iter().collect();
                 children.sort();
 
                 let mut payload = reply_header.to_bytes();
@@ -365,11 +366,16 @@ impl KeeperServer {
                 payload.extend(EmptyResponse.to_bytes());
                 payload
             }
-            Err(_) => {
+            Err(e) => {
+                let err = if e == "Node has children" {
+                    ErrorCode::NotEmpty
+                } else {
+                    ErrorCode::NoNode
+                };
                 let reply_header = ReplyHeader {
                     xid: header.xid,
                     zxid: 0,
-                    err: ErrorCode::NoNode,
+                    err,
                 };
                 reply_header.to_bytes()
             }

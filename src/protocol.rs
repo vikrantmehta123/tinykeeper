@@ -65,6 +65,7 @@ pub enum ErrorCode {
     Ok = 0,
     NoNode = -101,
     BadVersion = -103,
+    NotEmpty = -111,
     NodeExists = -110,
 }
 

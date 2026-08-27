@@ -104,6 +104,7 @@ impl KeeperServer {
                     children: &children,
                 };
                 payload.extend(res.to_bytes());
+                payload.extend(node.stat.to_bytes(node.data.len() as i32, node.children.len() as i32));
                 payload
             }
             None => {

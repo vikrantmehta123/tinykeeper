@@ -1,2 +1,5 @@
 /target
 /tinykeeper-data
+
+/tests/__pycache__
+/.venv

@@ -5,6 +5,11 @@ use std::time::SystemTime;
 
 pub struct KeeperStorage {
     map: HashMap<String, Node>,
+
+    // Ideally, we would use an AtomicI64.
+    // But KeeperStorage is always used inside a RwLock.
+    // So, it's safe to have the zxid as a normal int
+    last_zxid: i64,
 }
 
 impl KeeperStorage {
@@ -18,7 +23,11 @@ impl KeeperStorage {
                 stat: Stat::default(),
             },
         );
-        KeeperStorage { map }
+        KeeperStorage { map, last_zxid: 0 }
+    }
+
+    pub fn last_zxid(&self) -> i64 {
+        self.last_zxid
     }
 
     pub fn create(&mut self, path: &str, data: Vec<u8>) -> Result<(), &'static str> {
@@ -50,8 +59,8 @@ impl KeeperStorage {
             .unwrap()
             .as_millis() as i64;
 
-        // TODO: Placeholder zxid. Fix it once you have atomic counter
-        let czxid = 0i64;
+        self.last_zxid += 1;
+        let czxid = self.last_zxid;
 
         let new_node = Node {
             data,
@@ -76,7 +85,7 @@ impl KeeperStorage {
         let parent = self.map.get_mut(parent_path).unwrap();
         parent.children.insert(child_name.to_string());
         parent.stat.cversion += 1;
-        parent.stat.pzxid = 0; // TODO: Update this once atomic counting zxid is there
+        parent.stat.pzxid = czxid;
 
         Ok(())
     }
@@ -103,8 +112,9 @@ impl KeeperStorage {
                     .as_millis() as i64;
 
                 node.stat.version += 1;
-                // TODO: When zxid counter logic is added, change this.
-                node.stat.mzxid = 0;
+
+                self.last_zxid += 1;
+                node.stat.mzxid = self.last_zxid;
                 node.stat.mtime = now;
                 node.data = data;
 
@@ -146,8 +156,9 @@ impl KeeperStorage {
         let parent = self.map.get_mut(parent_path).unwrap();
         parent.children.remove(child_name);
         parent.stat.cversion += 1;
-        // TODO: Need to change this when we add zxid counter
-        parent.stat.pzxid = 0;
+
+        self.last_zxid += 1;
+        parent.stat.pzxid = self.last_zxid;
 
         Ok(())
     }

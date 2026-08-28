@@ -75,9 +75,10 @@ impl KeeperServer {
             OpCode::Set => self.handle_set(header, &mut buf).await,
             OpCode::Remove => self.handle_delete(header, &mut buf).await,
             OpCode::Heartbeat => {
+                let tree = self.storage.read().await;
                 let reply_header = ReplyHeader {
                     xid: header.xid,
-                    zxid: 0,
+                    zxid: tree.last_zxid(),
                     err: ErrorCode::Ok,
                 };
                 reply_header.to_bytes()
@@ -100,7 +101,7 @@ impl KeeperServer {
             Some(node) => {
                 let reply_header = ReplyHeader {
                     xid: header.xid,
-                    zxid: 0,
+                    zxid: tree.last_zxid(),
                     err: ErrorCode::Ok,
                 };
                 let res = ExistsResponse { stat: &node.stat };
@@ -111,7 +112,7 @@ impl KeeperServer {
             None => {
                 let reply_header = ReplyHeader {
                     xid: header.xid,
-                    zxid: 0,
+                    zxid: tree.last_zxid(),
                     err: ErrorCode::NoNode,
                 };
                 reply_header.to_bytes()
@@ -128,7 +129,7 @@ impl KeeperServer {
             Some(node) => {
                 let reply_header = ReplyHeader {
                     xid: header.xid,
-                    zxid: 0,
+                    zxid: tree.last_zxid(),
                     err: ErrorCode::Ok,
                 };
 
@@ -150,7 +151,7 @@ impl KeeperServer {
             None => {
                 let reply_header = ReplyHeader {
                     xid: header.xid,
-                    zxid: 0,
+                    zxid: tree.last_zxid(),
                     err: ErrorCode::NoNode,
                 };
                 reply_header.to_bytes()
@@ -171,7 +172,7 @@ impl KeeperServer {
         if tree.exists(req.path) {
             let reply_header = ReplyHeader {
                 xid: header.xid,
-                zxid: 0,
+                zxid: tree.last_zxid(),
                 err: ErrorCode::NodeExists,
             };
             return reply_header.to_bytes(); // Exit early! Do NOT write to WAL and do NOT mutate the tree.
@@ -195,7 +196,7 @@ impl KeeperServer {
             Ok(_) => {
                 let reply_header = ReplyHeader {
                     xid: header.xid,
-                    zxid: 0, // temporary placeholder
+                    zxid: tree.last_zxid(),
                     err: ErrorCode::Ok,
                 };
 
@@ -221,7 +222,7 @@ impl KeeperServer {
             Some(node) => {
                 let reply_header = ReplyHeader {
                     xid: header.xid,
-                    zxid: 0,
+                    zxid: tree.last_zxid(),
                     err: ErrorCode::Ok,
                 };
                 let get_res = GetDataResponse {
@@ -235,7 +236,7 @@ impl KeeperServer {
             None => {
                 let reply_header = ReplyHeader {
                     xid: header.xid,
-                    zxid: 0,
+                    zxid: tree.last_zxid(),
                     err: ErrorCode::NoNode,
                 };
                 reply_header.to_bytes()
@@ -257,7 +258,7 @@ impl KeeperServer {
             None => {
                 let reply_header = ReplyHeader {
                     xid: header.xid,
-                    zxid: 0,
+                    zxid: tree.last_zxid(),
                     err: ErrorCode::NoNode,
                 };
                 return reply_header.to_bytes();
@@ -267,7 +268,7 @@ impl KeeperServer {
         if req.version != -1 && current_version != req.version {
             let reply_header = ReplyHeader {
                 xid: header.xid,
-                zxid: 0,
+                zxid: tree.last_zxid(),
                 err: ErrorCode::BadVersion,
             };
             return reply_header.to_bytes();
@@ -292,7 +293,7 @@ impl KeeperServer {
                 let node = tree.traverse(req.path).unwrap();
                 let reply_header = ReplyHeader {
                     xid: header.xid,
-                    zxid: 0,
+                    zxid: tree.last_zxid(),
                     err: ErrorCode::Ok,
                 };
                 let set_res = SetDataResponse { stat: &node.stat };
@@ -304,7 +305,7 @@ impl KeeperServer {
             Err(_) => {
                 let reply_header = ReplyHeader {
                     xid: header.xid,
-                    zxid: 0,
+                    zxid: tree.last_zxid(),
                     err: ErrorCode::NoNode,
                 };
                 reply_header.to_bytes()
@@ -326,7 +327,7 @@ impl KeeperServer {
             None => {
                 let reply_header = ReplyHeader {
                     xid: header.xid,
-                    zxid: 0,
+                    zxid: tree.last_zxid(),
                     err: ErrorCode::NoNode,
                 };
                 return reply_header.to_bytes();
@@ -336,7 +337,7 @@ impl KeeperServer {
         if req.version != -1 && current_version != req.version {
             let reply_header = ReplyHeader {
                 xid: header.xid,
-                zxid: 0,
+                zxid: tree.last_zxid(),
                 err: ErrorCode::BadVersion,
             };
             return reply_header.to_bytes();
@@ -359,7 +360,7 @@ impl KeeperServer {
             Ok(_) => {
                 let reply_header = ReplyHeader {
                     xid: header.xid,
-                    zxid: 0,
+                    zxid: tree.last_zxid(),
                     err: ErrorCode::Ok,
                 };
                 let mut payload = reply_header.to_bytes();
@@ -374,7 +375,7 @@ impl KeeperServer {
                 };
                 let reply_header = ReplyHeader {
                     xid: header.xid,
-                    zxid: 0,
+                    zxid: tree.last_zxid(),
                     err,
                 };
                 reply_header.to_bytes()

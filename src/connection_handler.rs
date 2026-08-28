@@ -145,7 +145,7 @@ impl ConnectionHandler {
                     return;
                 }
             }
-
+            let opcode = i32::from_be_bytes(payload_buffer[4..8].try_into().unwrap());
             let response_payload = self.dispatcher.dispatch(payload_buffer).await;
 
             if !response_payload.is_empty() {
@@ -161,6 +161,10 @@ impl ConnectionHandler {
                 if self.socket.write_all(&response_payload).await.is_err() {
                     return;
                 }
+            }
+            if opcode == -11 {
+                println!("Close received, shutting down connection");
+                return;
             }
         }
     }

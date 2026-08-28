@@ -30,6 +30,15 @@ impl KeeperStorage {
         self.last_zxid
     }
 
+    pub fn next_zxid(&mut self) -> i64 {
+        self.last_zxid += 1;
+        self.last_zxid
+    }
+
+    pub fn set_last_zxid(&mut self, zxid: i64) {
+        self.last_zxid = zxid;
+    }
+
     pub fn create(&mut self, path: &str, data: Vec<u8>) -> Result<(), &'static str> {
         let (parent_path, child_name) = match path.rsplit_once("/") {
             Some((p, c)) => (p, c),
@@ -59,22 +68,19 @@ impl KeeperStorage {
             .unwrap()
             .as_millis() as i64;
 
-        self.last_zxid += 1;
-        let czxid = self.last_zxid;
-
         let new_node = Node {
             data,
             children: HashSet::new(),
             stat: Stat {
-                czxid,
-                mzxid: czxid,
+                czxid: self.last_zxid,
+                mzxid: self.last_zxid,
                 ctime: now,
                 mtime: now,
                 version: 0,
                 cversion: 0,
                 aversion: 0,
                 ephemeral_owner: 0,
-                pzxid: czxid,
+                pzxid: self.last_zxid,
             },
         };
 
@@ -85,7 +91,7 @@ impl KeeperStorage {
         let parent = self.map.get_mut(parent_path).unwrap();
         parent.children.insert(child_name.to_string());
         parent.stat.cversion += 1;
-        parent.stat.pzxid = czxid;
+        parent.stat.pzxid = self.last_zxid;
 
         Ok(())
     }
@@ -113,7 +119,6 @@ impl KeeperStorage {
 
                 node.stat.version += 1;
 
-                self.last_zxid += 1;
                 node.stat.mzxid = self.last_zxid;
                 node.stat.mtime = now;
                 node.data = data;
@@ -157,7 +162,6 @@ impl KeeperStorage {
         parent.children.remove(child_name);
         parent.stat.cversion += 1;
 
-        self.last_zxid += 1;
         parent.stat.pzxid = self.last_zxid;
 
         Ok(())

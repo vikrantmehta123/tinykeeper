@@ -34,7 +34,8 @@ impl KeeperServer {
 
         let wal = WalStore::open(wal_dir, 50 * 1024 * 1024).await?;
 
-        wal.replay(|_index, _term, payload| {
+        wal.replay(|index, _term, payload| {
+            storage.set_last_zxid(index as i64);
             if let Some(op) = WalOperation::deserialize(&payload) {
                 match op {
                     WalOperation::Create { path, data } => {
@@ -86,6 +87,15 @@ impl KeeperServer {
             OpCode::SimpleList => self.handle_get_children_simple(header, &mut buf).await,
             OpCode::List => self.handle_get_children(header, &mut buf).await,
             OpCode::Exists => self.handle_exists(header, &mut buf).await,
+            OpCode::Close => {
+                let tree = self.storage.read().await;
+                let reply_header = ReplyHeader {
+                    xid: header.xid,
+                    zxid: tree.last_zxid(),
+                    err: ErrorCode::Ok,
+                };
+                reply_header.to_bytes()
+            }
             _ => {
                 println!("Received unimplemented OpCode: {:?}", header.opcode);
                 Vec::new()
@@ -219,8 +229,10 @@ impl KeeperServer {
         };
         let payload = op.serialize();
 
+        let zxid = tree.next_zxid();
+
         let mut wal = self.wal.lock().await;
-        wal.append(1, 0, 0, 0, &payload);
+        wal.append(1, zxid as u64, 0, 0, &payload);
         if let Err(e) = wal.flush().await {
             println!("Failed to write to WAL: {}", e);
             return Vec::new();
@@ -315,8 +327,10 @@ impl KeeperServer {
         };
         let payload = op.serialize();
 
+        let zxid = tree.next_zxid();
+
         let mut wal = self.wal.lock().await;
-        wal.append(1, 0, 0, 0, &payload);
+        wal.append(1, zxid as u64, 0, 0, &payload);
         if let Err(e) = wal.flush().await {
             println!("Failed to write to WAL: {}", e);
             return Vec::new();
@@ -383,8 +397,10 @@ impl KeeperServer {
         };
         let payload = op.serialize();
 
+        let zxid = tree.next_zxid();
+
         let mut wal = self.wal.lock().await;
-        wal.append(1, 0, 0, 0, &payload);
+        wal.append(1, zxid as u64, 0, 0, &payload);
         if let Err(e) = wal.flush().await {
             println!("Failed to write to WAL: {}", e);
             return Vec::new();

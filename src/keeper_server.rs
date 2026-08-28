@@ -83,6 +83,7 @@ impl KeeperServer {
                 };
                 reply_header.to_bytes()
             }
+            OpCode::SimpleList => self.handle_get_children_simple(header, &mut buf).await,
             OpCode::List => self.handle_get_children(header, &mut buf).await,
             OpCode::Exists => self.handle_exists(header, &mut buf).await,
             _ => {
@@ -159,6 +160,40 @@ impl KeeperServer {
         }
     }
 
+    async fn handle_get_children_simple(&self, header: RequestHeader, buf: &mut &[u8]) -> Vec<u8> {
+        let Some(req) = GetChildrenRequest::from_bytes(buf) else {
+            return Vec::new();
+        };
+        let tree = self.storage.read().await;
+        match tree.traverse(req.path) {
+            Some(node) => {
+                let reply_header = ReplyHeader {
+                    xid: header.xid,
+                    zxid: tree.last_zxid(),
+                    err: ErrorCode::Ok,
+                };
+
+                let mut children: Vec<&String> = node.children.iter().collect();
+                children.sort();
+
+                let mut payload = reply_header.to_bytes();
+
+                let res = GetChildrenResponse {
+                    children: &children,
+                };
+                payload.extend(res.to_bytes());
+                payload
+            }
+            None => {
+                let reply_header = ReplyHeader {
+                    xid: header.xid,
+                    zxid: tree.last_zxid(),
+                    err: ErrorCode::NoNode,
+                };
+                reply_header.to_bytes()
+            }
+        }
+    }
     async fn handle_create(&self, header: RequestHeader, buf: &mut &[u8]) -> Vec<u8> {
         let Some(req) = CreateRequest::from_bytes(buf) else {
             println!("Failed to parse CreateRequest payload!");

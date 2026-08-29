@@ -3,22 +3,22 @@ use crate::session_expiry_queue::SessionExpiryQueue;
 use crate::znode::Node;
 use std::collections::{HashMap, HashSet};
 
-/// Every client that connects to our server gets a session. 
-/// The session is how we track "this client is alive." 
-/// If the client stops sending requests, eventually its session 
+/// Every client that connects to our server gets a session.
+/// The session is how we track "this client is alive."
+/// If the client stops sending requests, eventually its session
 /// expires and we clean up after it — specifically, we delete any
 /// ephemeral nodes it created.
 ///
-/// SessionState is the struct that holds all of that bookkeeping. 
+/// SessionState is the struct that holds all of that bookkeeping.
 /// It needs to answer four questions:
-/// 1. Which sessions exist, and what's their timeout? 
-/// 2. Which ephemeral paths does each session own? → 
-/// 3. What's the next session ID to hand out? 
-/// 4. When does each session expire? 
+/// 1. Which sessions exist, and what's their timeout?
+/// 2. Which ephemeral paths does each session own? →
+/// 3. What's the next session ID to hand out?
+/// 4. When does each session expire?
 pub struct SessionState {
     session_and_timeout: HashMap<SessionId, i64>,
     ephemerals: HashMap<SessionId, HashSet<String>>,
-    next_session_id: i64, 
+    next_session_id: i64,
     expiry_queue: SessionExpiryQueue,
 }
 
@@ -47,10 +47,9 @@ impl SessionState {
         id
     }
 
-    /// touch_session refreshes the session's expiry deadline. 
+    /// touch_session refreshes the session's expiry deadline.
     /// It's called on every request from the client
     pub fn touch_session(&mut self, id: SessionId, now: i64) {
-
         // If the session id doesn't even exist, we do nothing.
         if let Some(&timeout_ms) = self.session_and_timeout.get(&id) {
             self.expiry_queue.touch(id, timeout_ms, now);
@@ -61,7 +60,7 @@ impl SessionState {
     pub fn add_ephemeral(&mut self, id: SessionId, path: String) {
         self.ephemerals.entry(id).or_default().insert(path);
     }
-   
+
     /// Called when a client explicitly deletes an ephemeral node
     pub fn remove_ephemeral(&mut self, id: SessionId, path: &str) {
         if let Some(paths) = self.ephemerals.get_mut(&id) {
@@ -72,8 +71,8 @@ impl SessionState {
         }
     }
 
-    /// close_session is called when a session ends- either the client sends 
-    /// OpCode::Close or the background task detects it expired. It needs to 
+    /// close_session is called when a session ends- either the client sends
+    /// OpCode::Close or the background task detects it expired. It needs to
     /// clean up everything this session owned and return the list of ephemeral
     /// paths so the caller can delete those znodes.
     ///
@@ -90,7 +89,7 @@ impl SessionState {
     pub fn get_expired(&self, now: i64) -> Vec<SessionId> {
         self.expiry_queue.get_expired(now)
     }
-    
+
     pub fn is_alive(&self, id: SessionId) -> bool {
         self.session_and_timeout.contains_key(&id)
     }
@@ -104,7 +103,7 @@ pub struct KeeperStorage {
     // So, it's safe to have the zxid as a normal int
     last_zxid: i64,
 
-    pub session_state: SessionState, 
+    pub session_state: SessionState,
 }
 
 impl KeeperStorage {

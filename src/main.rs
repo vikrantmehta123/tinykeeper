@@ -6,9 +6,9 @@ mod dispatcher;
 mod keeper_server;
 mod protocol;
 mod server_uuid;
+mod session_expiry_queue;
 mod storage;
 mod znode;
-mod session_expiry_queue;
 
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;

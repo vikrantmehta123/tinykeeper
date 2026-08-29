@@ -5,13 +5,13 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 use crate::dispatcher::KeeperDispatcher;
-use crate::protocol::{ConnectRequest, ConnectResponse};
+use crate::protocol::{ConnectRequest, ConnectResponse, SessionId};
 
 pub struct ConnectionHandler {
     socket: TcpStream,
     dispatcher: Arc<KeeperDispatcher>,
     idle_timeout: Duration,
-    session_id: Option<i64>,
+    session_id: Option<SessionId>,
 }
 
 impl ConnectionHandler {
@@ -81,8 +81,8 @@ impl ConnectionHandler {
             return;
         };
 
-        let connect_response: ConnectResponse = self.dispatcher.handshake(connect_request);
-        self.session_id = Some(connect_response.session_id);
+        let connect_response: ConnectResponse = self.dispatcher.handshake(connect_request).await;
+        self.session_id = Some(SessionId(connect_response.session_id));
 
         let response_bytes = connect_response.to_bytes();
         let total_length = response_bytes.len() as i32;
@@ -146,7 +146,10 @@ impl ConnectionHandler {
                 }
             }
             let opcode = i32::from_be_bytes(payload_buffer[4..8].try_into().unwrap());
-            let response_payload = self.dispatcher.dispatch(payload_buffer).await;
+            let response_payload = self
+                .dispatcher
+                .dispatch(payload_buffer, self.session_id.unwrap())
+                .await;
 
             if !response_payload.is_empty() {
                 let total_length = response_payload.len() as i32;

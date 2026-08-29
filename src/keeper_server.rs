@@ -77,7 +77,19 @@ impl KeeperServer {
         })
     }
 
-    pub async fn apply(&self, payload: &[u8]) -> Vec<u8> {
+    pub async fn create_session(&self, timeout_ms: i64) -> SessionId {
+        let now = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        self.storage
+            .write()
+            .await
+            .session_state
+            .create_session(timeout_ms, now)
+    }
+
+    pub async fn apply(&self, payload: &[u8], session_id: SessionId) -> Vec<u8> {
         if payload.len() < 8 {
             println!("Message too short to be a standard request");
             let tree = self.storage.read().await;
@@ -88,6 +100,18 @@ impl KeeperServer {
             };
             return reply_header.to_bytes();
         }
+
+        // TODO: Review the locking system end-to-end. Currently, we are holding onto the
+        // locks for long time. And that's going to add to the cost
+        let now = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        self.storage
+            .write()
+            .await
+            .session_state
+            .touch_session(session_id, now);
 
         let mut buf = payload;
         let header = RequestHeader::from_bytes(&mut buf).expect("unknown opcode");

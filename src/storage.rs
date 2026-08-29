@@ -1,6 +1,100 @@
 use crate::protocol::{SessionId, Stat};
+use crate::session_expiry_queue::SessionExpiryQueue;
 use crate::znode::Node;
 use std::collections::{HashMap, HashSet};
+
+/// Every client that connects to our server gets a session. 
+/// The session is how we track "this client is alive." 
+/// If the client stops sending requests, eventually its session 
+/// expires and we clean up after it — specifically, we delete any
+/// ephemeral nodes it created.
+///
+/// SessionState is the struct that holds all of that bookkeeping. 
+/// It needs to answer four questions:
+/// 1. Which sessions exist, and what's their timeout? 
+/// 2. Which ephemeral paths does each session own? → 
+/// 3. What's the next session ID to hand out? 
+/// 4. When does each session expire? 
+pub struct SessionState {
+    session_and_timeout: HashMap<SessionId, i64>,
+    ephemerals: HashMap<SessionId, HashSet<String>>,
+    next_session_id: i64, 
+    expiry_queue: SessionExpiryQueue,
+}
+
+impl SessionState {
+    pub fn new(interval_ms: i64) -> Self {
+        Self {
+            session_and_timeout: HashMap::new(),
+            ephemerals: HashMap::new(),
+            next_session_id: 1,
+            expiry_queue: SessionExpiryQueue::new(interval_ms),
+        }
+    }
+
+    /// create_session is called during the handshake when a new client connects. It needs to:
+    /// 1. Grab the current next_session_id and bump it for next time.
+    /// 2. Record this session and its timeout in session_and_timeout.
+    /// 3. Touch the expiry queue so the session has an expiry deadline.
+    /// 4. Return the new SessionId so the dispatcher can send it back to the client.
+    ///
+    /// In v2+, this method will be called only on the leader keeper node
+    pub fn create_session(&mut self, timeout_ms: i64, now: i64) -> SessionId {
+        let id = SessionId(self.next_session_id);
+        self.next_session_id += 1;
+        self.session_and_timeout.insert(id, timeout_ms);
+        self.expiry_queue.touch(id, timeout_ms, now);
+        id
+    }
+
+    /// touch_session refreshes the session's expiry deadline. 
+    /// It's called on every request from the client
+    pub fn touch_session(&mut self, id: SessionId, now: i64) {
+
+        // If the session id doesn't even exist, we do nothing.
+        if let Some(&timeout_ms) = self.session_and_timeout.get(&id) {
+            self.expiry_queue.touch(id, timeout_ms, now);
+        }
+    }
+
+    /// Called when a client creates an ephemeral znode.
+    pub fn add_ephemeral(&mut self, id: SessionId, path: String) {
+        self.ephemerals.entry(id).or_default().insert(path);
+    }
+   
+    /// Called when a client explicitly deletes an ephemeral node
+    pub fn remove_ephemeral(&mut self, id: SessionId, path: &str) {
+        if let Some(paths) = self.ephemerals.get_mut(&id) {
+            paths.remove(path);
+            if paths.is_empty() {
+                self.ephemerals.remove(&id);
+            }
+        }
+    }
+
+    /// close_session is called when a session ends- either the client sends 
+    /// OpCode::Close or the background task detects it expired. It needs to 
+    /// clean up everything this session owned and return the list of ephemeral
+    /// paths so the caller can delete those znodes.
+    ///
+    /// NOTE: The znodes are not deleted here. The caller does that
+    pub fn close_session(&mut self, id: SessionId) -> Vec<String> {
+        self.session_and_timeout.remove(&id);
+        self.expiry_queue.remove(id);
+        self.ephemerals
+            .remove(&id)
+            .map(|paths| paths.into_iter().collect())
+            .unwrap_or_default()
+    }
+
+    pub fn get_expired(&self, now: i64) -> Vec<SessionId> {
+        self.expiry_queue.get_expired(now)
+    }
+    
+    pub fn is_alive(&self, id: SessionId) -> bool {
+        self.session_and_timeout.contains_key(&id)
+    }
+}
 
 pub struct KeeperStorage {
     map: HashMap<String, Node>,
@@ -9,10 +103,12 @@ pub struct KeeperStorage {
     // But KeeperStorage is always used inside a RwLock.
     // So, it's safe to have the zxid as a normal int
     last_zxid: i64,
+
+    pub session_state: SessionState, 
 }
 
 impl KeeperStorage {
-    pub fn new() -> Self {
+    pub fn new(interval_ms: i64) -> Self {
         let mut map = HashMap::new();
         map.insert(
             "/".to_string(),
@@ -22,7 +118,11 @@ impl KeeperStorage {
                 stat: Stat::default(),
             },
         );
-        KeeperStorage { map, last_zxid: 0 }
+        KeeperStorage {
+            map,
+            last_zxid: 0,
+            session_state: SessionState::new(interval_ms),
+        }
     }
 
     pub fn last_zxid(&self) -> i64 {
@@ -97,10 +197,6 @@ impl KeeperStorage {
 
     pub fn traverse(&self, path: &str) -> Option<&Node> {
         self.map.get(path)
-    }
-
-    pub fn traverse_mut(&mut self, path: &str) -> Option<&mut Node> {
-        self.map.get_mut(path)
     }
 
     pub fn exists(&self, path: &str) -> bool {

@@ -41,7 +41,7 @@ pub struct KeeperServer {
 
 impl KeeperServer {
     pub async fn new(wal_dir: &Path) -> Result<Self, Box<dyn std::error::Error>> {
-        let mut storage = KeeperStorage::new();
+        let mut storage = KeeperStorage::new(500);
 
         let wal = WalStore::open(wal_dir, 50 * 1024 * 1024).await?;
 

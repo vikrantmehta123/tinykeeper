@@ -89,6 +89,22 @@ impl KeeperServer {
             .create_session(timeout_ms, now)
     }
 
+    pub async fn close_session(&self, session_id: SessionId) {
+        let mut tree = self.storage.write().await;
+        let paths = tree.session_state.close_session(session_id);
+        for path in &paths {
+            let _ = tree.delete(path);
+        }
+    }
+
+    pub async fn get_expired_sessions(&self) -> Vec<SessionId> {
+        let now = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        self.storage.read().await.session_state.get_expired(now)
+    }
+
     pub async fn apply(&self, payload: &[u8], session_id: SessionId) -> Vec<u8> {
         if payload.len() < 8 {
             println!("Message too short to be a standard request");

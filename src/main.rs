@@ -43,7 +43,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 5. Build KeeperServer (opens/replays the WAL) and KeeperDispatcher.
     let wal_dir = config.storage_path.join("changelog");
     let server = Arc::new(KeeperServer::new(&wal_dir).await?);
-    let dispatcher = Arc::new(KeeperDispatcher::new(server));
+    let dispatcher = Arc::new(KeeperDispatcher::new(server, 500));
     context
         .dispatcher
         .set(Arc::clone(&dispatcher))

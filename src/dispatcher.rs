@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::keeper_server::KeeperServer;
 use crate::protocol::SessionId;
@@ -9,7 +10,19 @@ pub struct KeeperDispatcher {
 }
 
 impl KeeperDispatcher {
-    pub fn new(server: Arc<KeeperServer>) -> Self {
+    pub fn new(server: Arc<KeeperServer>, check_interval_ms: u64) -> Self {
+        let bg_server = Arc::clone(&server);
+        tokio::spawn(async move {
+            let interval = Duration::from_millis(check_interval_ms);
+            loop {
+                tokio::time::sleep(interval).await;
+                let expired = bg_server.get_expired_sessions().await;
+                for id in expired {
+                    bg_server.close_session(id).await;
+                }
+            }
+        });
+    
         KeeperDispatcher { server }
     }
 
@@ -50,7 +63,7 @@ mod tests {
         let wal_path = dir.join("test.wal");
 
         let server = Arc::new(KeeperServer::new(&wal_path).await.unwrap());
-        let dispatcher = KeeperDispatcher::new(server);
+        let dispatcher = KeeperDispatcher::new(server, 500);
 
         // xid=42 (4 bytes), opcode=11/ping (4 bytes), no body needed.
         let mut payload = Vec::new();

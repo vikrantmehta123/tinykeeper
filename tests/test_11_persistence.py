@@ -163,7 +163,6 @@ class TestMetadataSurvives:
         assert after.ctime == before.ctime
         assert after.mtime == before.mtime
 
-    @todo(ZXIDS)
     def test_zxids_survive_a_crash_and_keep_climbing(self, keeper):
         """The transaction counter is part of the durable state. If it
         restarted at zero, a node created after the restart would look older

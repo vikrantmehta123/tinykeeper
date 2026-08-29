@@ -75,7 +75,6 @@ class TestSessionLifetime:
         data, _stat = zk.get("/idle")
         assert data == b"before"
 
-    @todo(CLOSE)
     def test_graceful_close_is_acknowledged(self, keeper):
         """`stop()` sends Close (opcode -11). The server should answer it
         and tear the session down, rather than waiting for the socket to

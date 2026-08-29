@@ -137,7 +137,11 @@ impl KeeperServer {
             OpCode::List => self.handle_get_children(header, &mut buf).await,
             OpCode::Exists => self.handle_exists(header, &mut buf).await,
             OpCode::Close => {
-                let tree = self.storage.read().await;
+                let mut tree = self.storage.write().await;
+                let paths = tree.session_state.close_session(session_id);
+                for path in &paths {
+                    let _ = tree.delete(path);
+                }
                 let reply_header = ReplyHeader {
                     xid: header.xid,
                     zxid: tree.last_zxid(),
@@ -561,7 +565,11 @@ impl KeeperServer {
         }
         drop(wal);
 
+        let owner = tree.traverse(req.path).unwrap().stat.ephemeral_owner;
         let _ = tree.delete(req.path);
+        if owner != SessionId(0) {
+            tree.session_state.remove_ephemeral(owner, req.path);
+        }
 
         let reply_header = ReplyHeader {
             xid: header.xid,

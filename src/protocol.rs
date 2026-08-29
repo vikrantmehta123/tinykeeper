@@ -139,25 +139,36 @@ impl RequestHeader {
 pub struct CreateRequest<'a> {
     pub path: &'a str,
     pub data: &'a [u8],
+    pub flags: i32,
 }
 
 impl<'a> CreateRequest<'a> {
-    // Notice the `'a` ties the lifetime of the returned struct directly to the input buffer!
     pub fn from_bytes(buf: &mut &'a [u8]) -> Option<Self> {
         // 1. Parse Path
         let path_len = buf.get_i32() as usize;
         let (path_bytes, remaining) = buf.split_at(path_len);
         let path = std::str::from_utf8(path_bytes).ok()?;
-
-        *buf = remaining; // Manually advance the cursor
+        *buf = remaining;
 
         // 2. Parse Data
         let data_len = buf.get_i32() as usize;
         let (data, remaining) = buf.split_at(data_len);
+        *buf = remaining;
 
-        *buf = remaining; // Advance the cursor again
+        // 3. Skip ACL list
+        let acl_count = buf.get_i32();
+        for _ in 0..acl_count {
+            let _perms = buf.get_i32();
+            let scheme_len = buf.get_i32() as usize;
+            buf.advance(scheme_len);
+            let id_len = buf.get_i32() as usize;
+            buf.advance(id_len);
+        }
 
-        Some(Self { path, data })
+        // 4. Read flags
+        let flags = buf.get_i32();
+
+        Some(Self { path, data, flags })
     }
 }
 

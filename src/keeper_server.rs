@@ -54,7 +54,7 @@ impl KeeperServer {
                         data,
                         timestamp,
                     } => {
-                        let _ = storage.create(&path, data, timestamp);
+                        let _ = storage.create(&path, data, timestamp, SessionId(0), 0);
                     }
                     WalOperation::Set {
                         path,
@@ -120,7 +120,7 @@ impl KeeperServer {
             header.xid, header.opcode
         );
         match header.opcode {
-            OpCode::Create => self.handle_create(header, &mut buf).await,
+            OpCode::Create => self.handle_create(header, &mut buf, session_id).await,
             OpCode::Get => self.handle_get(header, &mut buf).await,
             OpCode::Set => self.handle_set(header, &mut buf).await,
             OpCode::Remove => self.handle_delete(header, &mut buf).await,
@@ -277,7 +277,12 @@ impl KeeperServer {
             }
         }
     }
-    async fn handle_create(&self, header: RequestHeader, buf: &mut &[u8]) -> Vec<u8> {
+    async fn handle_create(
+        &self,
+        header: RequestHeader,
+        buf: &mut &[u8],
+        session_id: SessionId,
+    ) -> Vec<u8> {
         let Some(req) = CreateRequest::from_bytes(buf) else {
             println!("Failed to parse CreateRequest payload!");
             let tree = self.storage.read().await;
@@ -363,7 +368,7 @@ impl KeeperServer {
         }
         drop(wal);
 
-        let _ = tree.create(req.path, req.data.to_vec(), now);
+        let _ = tree.create(req.path, req.data.to_vec(), now, session_id, req.flags);
 
         let reply_header = ReplyHeader {
             xid: header.xid,

@@ -137,11 +137,14 @@ impl KeeperStorage {
         self.last_zxid = zxid;
     }
 
+    #[allow(clippy::collapsible_if)]
     pub fn create(
         &mut self,
         path: &str,
         data: Vec<u8>,
         timestamp: i64,
+        session_id: SessionId,
+        flags: i32,
     ) -> Result<(), &'static str> {
         let (parent_path, child_name) = match path.rsplit_once("/") {
             Some((p, c)) => (p, c),
@@ -166,6 +169,12 @@ impl KeeperStorage {
             return Err("Node already exists");
         }
 
+        if let Some(parent) = self.map.get(parent_path) {
+            if parent.stat.ephemeral_owner != SessionId(0) {
+                return Err("Cannot create child under ephemeral node");
+            }
+        }
+
         let new_node = Node {
             data,
             children: HashSet::new(),
@@ -177,13 +186,22 @@ impl KeeperStorage {
                 version: 0,
                 cversion: 0,
                 aversion: 0,
-                ephemeral_owner: SessionId(0),
+                ephemeral_owner: if flags & 1 != 0 {
+                    session_id
+                } else {
+                    SessionId(0)
+                },
                 pzxid: self.last_zxid,
             },
         };
 
         // Mutation 1: insert the new node
         self.map.insert(path.to_string(), new_node);
+
+        if flags & 1 != 0 {
+            self.session_state
+                .add_ephemeral(session_id, path.to_string());
+        }
 
         // Mutation 2: update the parent
         let parent = self.map.get_mut(parent_path).unwrap();

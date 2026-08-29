@@ -148,25 +148,21 @@ class TestGetChildren:
     needs to answer both.
     """
 
-    @todo(GETCHILDREN)
     def test_get_children_returns_names(self, zk):
         zk.create("/parent", b"")
         zk.create("/parent/kid", b"")
         assert zk.get_children("/parent") == ["kid"]
 
-    @todo(GETCHILDREN)
     def test_get_children_returns_bare_names_not_paths(self, zk):
         zk.create("/names", b"")
         zk.create("/names/alpha", b"")
         zk.create("/names/beta", b"")
         assert set(zk.get_children("/names")) == {"alpha", "beta"}
 
-    @todo(GETCHILDREN)
     def test_get_children_of_a_leaf_is_empty(self, zk):
         zk.create("/leaf", b"data")
         assert zk.get_children("/leaf") == []
 
-    @todo(GETCHILDREN)
     def test_get_children_of_root(self, zk):
         zk.create("/top_a", b"")
         zk.create("/top_b", b"")

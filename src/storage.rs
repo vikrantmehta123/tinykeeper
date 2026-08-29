@@ -1,7 +1,7 @@
 use crate::protocol::Stat;
 use crate::znode::Node;
 use std::collections::{HashMap, HashSet};
-use std::time::SystemTime;
+
 
 pub struct KeeperStorage {
     map: HashMap<String, Node>,
@@ -39,7 +39,7 @@ impl KeeperStorage {
         self.last_zxid = zxid;
     }
 
-    pub fn create(&mut self, path: &str, data: Vec<u8>) -> Result<(), &'static str> {
+    pub fn create(&mut self, path: &str, data: Vec<u8>, timestamp: i64) -> Result<(), &'static str> {
         let (parent_path, child_name) = match path.rsplit_once("/") {
             Some((p, c)) => (p, c),
             None => return Err("Invalid path format"),
@@ -63,19 +63,14 @@ impl KeeperStorage {
             return Err("Node already exists");
         }
 
-        let now = SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as i64;
-
         let new_node = Node {
             data,
             children: HashSet::new(),
             stat: Stat {
                 czxid: self.last_zxid,
                 mzxid: self.last_zxid,
-                ctime: now,
-                mtime: now,
+                ctime: timestamp,
+                mtime: timestamp,
                 version: 0,
                 cversion: 0,
                 aversion: 0,
@@ -108,19 +103,13 @@ impl KeeperStorage {
         self.map.contains_key(path)
     }
 
-    pub fn set(&mut self, path: &str, data: Vec<u8>) -> Result<(), &'static str> {
+    pub fn set(&mut self, path: &str, data: Vec<u8>, timestamp: i64) -> Result<(), &'static str> {
         match self.map.get_mut(path) {
             Some(node) => {
-                // TODO: This needs to change in v2. We can't take local time.
-                let now = SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis() as i64;
-
                 node.stat.version += 1;
 
                 node.stat.mzxid = self.last_zxid;
-                node.stat.mtime = now;
+                node.stat.mtime = timestamp;
                 node.data = data;
 
                 Ok(())

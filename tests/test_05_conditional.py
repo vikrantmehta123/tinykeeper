@@ -15,11 +15,11 @@ read-modify-write silently lose one of the updates.
 import pytest
 from kazoo.exceptions import BadVersionError, NoNodeError
 
-from markers import VERSIONS, todo
+
 
 
 class TestConditionalSet:
-    @todo(VERSIONS)
+
     def test_set_with_the_matching_version(self, zk):
         zk.create("/cond_set", b"v0")
         zk.set("/cond_set", b"v1", version=0)
@@ -27,7 +27,7 @@ class TestConditionalSet:
         assert data == b"v1"
         assert stat.version == 1
 
-    @todo(VERSIONS)
+
     def test_set_with_a_stale_version_is_rejected(self, zk):
         zk.create("/cond_stale", b"v0")
         zk.set("/cond_stale", b"v1")  # version is now 1
@@ -39,7 +39,7 @@ class TestConditionalSet:
         assert data == b"v1", "a rejected set must not change the data"
         assert stat.version == 1, "a rejected set must not bump the version"
 
-    @todo(VERSIONS)
+
     def test_set_with_version_minus_one_always_applies(self, zk):
         zk.create("/cond_any", b"v0")
         zk.set("/cond_any", b"v1")
@@ -47,7 +47,7 @@ class TestConditionalSet:
         data, _stat = zk.get("/cond_any")
         assert data == b"v2"
 
-    @todo(VERSIONS)
+
     def test_the_version_a_set_returns_works_for_the_next_set(self, zk):
         """A client that chains writes should never need to re-read."""
         zk.create("/chained", b"v0")
@@ -59,14 +59,14 @@ class TestConditionalSet:
         assert data == b"v3"
         assert stat.version == 3
 
-    @todo(VERSIONS)
+
     def test_a_missing_node_reports_nonode_not_badversion(self, zk):
         """Existence is checked before the version. A client retrying on
         BadVersion would otherwise spin forever on a deleted node."""
         with pytest.raises(NoNodeError):
             zk.set("/never_existed", b"data", version=0)
 
-    @todo(VERSIONS)
+
     def test_the_loser_of_a_race_is_rejected(self, zk, zk2):
         """Both clients read version 0 and try to write. Exactly one wins."""
         zk.create("/contested", b"v0")
@@ -84,13 +84,13 @@ class TestConditionalSet:
 
 
 class TestConditionalDelete:
-    @todo(VERSIONS)
+
     def test_delete_with_the_matching_version(self, zk):
         zk.create("/cond_del", b"data")
         zk.delete("/cond_del", version=0)
         assert zk.exists("/cond_del") is None
 
-    @todo(VERSIONS)
+
     def test_delete_with_a_stale_version_is_rejected(self, zk):
         zk.create("/cond_del_stale", b"data")
         zk.set("/cond_del_stale", b"changed")
@@ -100,7 +100,7 @@ class TestConditionalDelete:
 
         assert zk.exists("/cond_del_stale") is not None
 
-    @todo(VERSIONS)
+
     def test_delete_with_version_minus_one_always_applies(self, zk):
         zk.create("/cond_del_any", b"data")
         zk.set("/cond_del_any", b"changed")

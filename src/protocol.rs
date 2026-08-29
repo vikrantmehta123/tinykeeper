@@ -63,6 +63,7 @@ impl TryFrom<i32> for OpCode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ErrorCode {
     Ok = 0,
+    BadArguments = -8,
     NoNode = -101,
     BadVersion = -103,
     NotEmpty = -111,

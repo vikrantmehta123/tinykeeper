@@ -20,7 +20,7 @@ import time
 
 import pytest
 
-from markers import ZXIDS, todo
+
 
 
 class TestVersions:
@@ -136,13 +136,13 @@ class TestTimestamps:
 class TestZxids:
     """Every write gets a transaction id, and the ids only go up."""
 
-    @todo(ZXIDS)
+
     def test_a_created_node_has_a_real_czxid(self, zk):
         zk.create("/zx", b"")
         stat = zk.exists("/zx")
         assert stat.czxid > 0
 
-    @todo(ZXIDS)
+
     def test_a_new_node_has_all_three_zxids_equal(self, zk):
         """At creation, the node was created, its data was written, and its
         (empty) child list was established — all by one transaction."""
@@ -150,7 +150,7 @@ class TestZxids:
         stat = zk.exists("/zx_equal")
         assert stat.czxid == stat.mzxid == stat.pzxid
 
-    @todo(ZXIDS)
+
     def test_later_nodes_get_higher_czxids(self, zk):
         zk.create("/zx_first", b"")
         first = zk.exists("/zx_first").czxid
@@ -160,7 +160,7 @@ class TestZxids:
 
         assert second > first
 
-    @todo(ZXIDS)
+
     def test_set_advances_mzxid_but_not_czxid(self, zk):
         zk.create("/zx_set", b"v0")
         before = zk.exists("/zx_set")
@@ -171,7 +171,7 @@ class TestZxids:
         assert after.czxid == before.czxid
         assert after.mzxid > before.mzxid
 
-    @todo(ZXIDS)
+
     def test_reads_do_not_advance_zxids(self, zk):
         """Only writes get transaction ids. A busy reader must not move the
         counter, or every read would look like a change to anyone watching."""
@@ -184,7 +184,7 @@ class TestZxids:
 
         assert zk.exists("/zx_read").mzxid == before
 
-    @todo(ZXIDS)
+
     def test_creating_a_child_advances_the_parents_pzxid(self, zk):
         zk.create("/zx_parent", b"")
         before = zk.exists("/zx_parent")
@@ -195,7 +195,7 @@ class TestZxids:
         assert after.pzxid > before.pzxid
         assert after.mzxid == before.mzxid, "a child is not a data change"
 
-    @todo(ZXIDS)
+
     def test_deleting_a_child_advances_the_parents_pzxid(self, zk):
         zk.create("/zx_del_parent", b"")
         zk.create("/zx_del_parent/child", b"")
@@ -205,7 +205,7 @@ class TestZxids:
 
         assert zk.exists("/zx_del_parent").pzxid > before
 
-    @todo(ZXIDS)
+
     def test_changing_a_childs_data_does_not_advance_the_parents_pzxid(self, zk):
         """pzxid tracks the *membership* of the child list, not what is
         inside the children."""
@@ -217,7 +217,7 @@ class TestZxids:
 
         assert zk.exists("/zx_stable_parent").pzxid == before
 
-    @todo(ZXIDS)
+
     def test_a_recreated_node_gets_a_new_czxid(self, zk):
         zk.create("/zx_phoenix", b"")
         original = zk.exists("/zx_phoenix").czxid

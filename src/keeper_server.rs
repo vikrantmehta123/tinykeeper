@@ -5,11 +5,12 @@ use crate::protocol::*;
 use crate::storage::KeeperStorage;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use std::time::SystemTime;
 
 #[derive(Serialize, Deserialize)]
 enum WalOperation {
-    Create { path: String, data: Vec<u8> },
-    Set { path: String, data: Vec<u8> },
+    Create { path: String, data: Vec<u8>, timestamp: i64 },
+    Set { path: String, data: Vec<u8>, timestamp: i64 },
     Delete { path: String },
 }
 
@@ -38,11 +39,11 @@ impl KeeperServer {
             storage.set_last_zxid(index as i64);
             if let Some(op) = WalOperation::deserialize(&payload) {
                 match op {
-                    WalOperation::Create { path, data } => {
-                        let _ = storage.create(&path, data);
+                    WalOperation::Create { path, data, timestamp } => {
+                        let _ = storage.create(&path, data, timestamp);
                     }
-                    WalOperation::Set { path, data } => {
-                        let _ = storage.set(&path, data);
+                    WalOperation::Set { path, data, timestamp } => {
+                        let _ = storage.set(&path, data, timestamp);
                     }
                     WalOperation::Delete { path } => {
                         let _ = storage.delete(&path);
@@ -61,7 +62,13 @@ impl KeeperServer {
     pub async fn apply(&self, payload: &[u8]) -> Vec<u8> {
         if payload.len() < 8 {
             println!("Message too short to be a standard request");
-            return Vec::new();
+            let tree = self.storage.read().await;
+            let reply_header = ReplyHeader {
+                xid: 0,
+                zxid: tree.last_zxid(),
+                err: ErrorCode::BadArguments,
+            };
+            return reply_header.to_bytes();
         }
 
         let mut buf = payload;
@@ -98,13 +105,25 @@ impl KeeperServer {
             }
             _ => {
                 println!("Received unimplemented OpCode: {:?}", header.opcode);
-                Vec::new()
+                let tree = self.storage.read().await;
+                let reply_header = ReplyHeader {
+                    xid: header.xid,
+                    zxid: tree.last_zxid(),
+                    err: ErrorCode::BadArguments,
+                };
+                reply_header.to_bytes()
             }
         }
     }
     async fn handle_exists(&self, header: RequestHeader, buf: &mut &[u8]) -> Vec<u8> {
         let Some(req) = ExistsRequest::from_bytes(buf) else {
-            return Vec::new();
+            let tree = self.storage.read().await;
+            let reply_header = ReplyHeader {
+                xid: header.xid,
+                zxid: tree.last_zxid(),
+                err: ErrorCode::BadArguments,
+            };
+            return reply_header.to_bytes();
         };
 
         let tree = self.storage.read().await;
@@ -133,7 +152,13 @@ impl KeeperServer {
 
     async fn handle_get_children(&self, header: RequestHeader, buf: &mut &[u8]) -> Vec<u8> {
         let Some(req) = GetChildrenRequest::from_bytes(buf) else {
-            return Vec::new();
+            let tree = self.storage.read().await;
+            let reply_header = ReplyHeader {
+                xid: header.xid,
+                zxid: tree.last_zxid(),
+                err: ErrorCode::BadArguments,
+            };
+            return reply_header.to_bytes();
         };
         let tree = self.storage.read().await;
         match tree.traverse(req.path) {
@@ -172,7 +197,13 @@ impl KeeperServer {
 
     async fn handle_get_children_simple(&self, header: RequestHeader, buf: &mut &[u8]) -> Vec<u8> {
         let Some(req) = GetChildrenRequest::from_bytes(buf) else {
-            return Vec::new();
+            let tree = self.storage.read().await;
+            let reply_header = ReplyHeader {
+                xid: header.xid,
+                zxid: tree.last_zxid(),
+                err: ErrorCode::BadArguments,
+            };
+            return reply_header.to_bytes();
         };
         let tree = self.storage.read().await;
         match tree.traverse(req.path) {
@@ -207,11 +238,15 @@ impl KeeperServer {
     async fn handle_create(&self, header: RequestHeader, buf: &mut &[u8]) -> Vec<u8> {
         let Some(req) = CreateRequest::from_bytes(buf) else {
             println!("Failed to parse CreateRequest payload!");
-            return Vec::new();
+            let tree = self.storage.read().await;
+            let reply_header = ReplyHeader {
+                xid: header.xid,
+                zxid: tree.last_zxid(),
+                err: ErrorCode::BadArguments,
+            };
+            return reply_header.to_bytes();
         };
 
-        // Brute Force: Get the tree lock early.
-        // TODO: In future, this should be pipelined
         let mut tree = self.storage.write().await;
 
         if tree.exists(req.path) {
@@ -220,12 +255,50 @@ impl KeeperServer {
                 zxid: tree.last_zxid(),
                 err: ErrorCode::NodeExists,
             };
-            return reply_header.to_bytes(); // Exit early! Do NOT write to WAL and do NOT mutate the tree.
+            return reply_header.to_bytes();
         }
+
+        let (parent_path, child_name) = match req.path.rsplit_once("/") {
+            Some((p, c)) => (p, c),
+            None => {
+                let reply_header = ReplyHeader {
+                    xid: header.xid,
+                    zxid: tree.last_zxid(),
+                    err: ErrorCode::BadArguments,
+                };
+                return reply_header.to_bytes();
+            }
+        };
+
+        if child_name.is_empty() {
+            let reply_header = ReplyHeader {
+                xid: header.xid,
+                zxid: tree.last_zxid(),
+                err: ErrorCode::BadArguments,
+            };
+            return reply_header.to_bytes();
+        }
+
+        let parent_path = if parent_path.is_empty() { "/" } else { parent_path };
+
+        if !tree.exists(parent_path) {
+            let reply_header = ReplyHeader {
+                xid: header.xid,
+                zxid: tree.last_zxid(),
+                err: ErrorCode::NoNode,
+            };
+            return reply_header.to_bytes();
+        }
+
+        let now = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
 
         let op = WalOperation::Create {
             path: req.path.to_string(),
             data: req.data.to_vec(),
+            timestamp: now,
         };
         let payload = op.serialize();
 
@@ -235,33 +308,37 @@ impl KeeperServer {
         wal.append(1, zxid as u64, 0, 0, &payload);
         if let Err(e) = wal.flush().await {
             println!("Failed to write to WAL: {}", e);
-            return Vec::new();
+            let reply_header = ReplyHeader {
+                xid: header.xid,
+                zxid: tree.last_zxid(),
+                err: ErrorCode::BadArguments,
+            };
+            return reply_header.to_bytes();
         }
         drop(wal);
 
-        match tree.create(req.path, req.data.to_vec()) {
-            Ok(_) => {
-                let reply_header = ReplyHeader {
-                    xid: header.xid,
-                    zxid: tree.last_zxid(),
-                    err: ErrorCode::Ok,
-                };
+        let _ = tree.create(req.path, req.data.to_vec(), now);
 
-                let create_res = CreateResponse { path: req.path };
-                let mut response_payload = reply_header.to_bytes();
-                response_payload.extend(create_res.to_bytes());
-                response_payload
-            }
-            Err(e) => {
-                println!("Failed to create: {}", e);
-                Vec::new()
-            }
-        }
+        let reply_header = ReplyHeader {
+            xid: header.xid,
+            zxid: tree.last_zxid(),
+            err: ErrorCode::Ok,
+        };
+        let create_res = CreateResponse { path: req.path };
+        let mut response_payload = reply_header.to_bytes();
+        response_payload.extend(create_res.to_bytes());
+        response_payload
     }
 
     async fn handle_get(&self, header: RequestHeader, buf: &mut &[u8]) -> Vec<u8> {
         let Some(req) = GetDataRequest::from_bytes(buf) else {
-            return Vec::new();
+            let tree = self.storage.read().await;
+            let reply_header = ReplyHeader {
+                xid: header.xid,
+                zxid: tree.last_zxid(),
+                err: ErrorCode::BadArguments,
+            };
+            return reply_header.to_bytes();
         };
 
         let tree = self.storage.read().await;
@@ -293,7 +370,13 @@ impl KeeperServer {
 
     async fn handle_set(&self, header: RequestHeader, buf: &mut &[u8]) -> Vec<u8> {
         let Some(req) = SetDataRequest::from_bytes(buf) else {
-            return Vec::new();
+            let tree = self.storage.read().await;
+            let reply_header = ReplyHeader {
+                xid: header.xid,
+                zxid: tree.last_zxid(),
+                err: ErrorCode::BadArguments,
+            };
+            return reply_header.to_bytes();
         };
 
         // Brute Force: Get the tree lock early.
@@ -321,9 +404,15 @@ impl KeeperServer {
             return reply_header.to_bytes();
         }
 
+        let now = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+
         let op = WalOperation::Set {
             path: req.path.to_string(),
             data: req.data.to_vec(),
+            timestamp: now,
         };
         let payload = op.serialize();
 
@@ -333,46 +422,46 @@ impl KeeperServer {
         wal.append(1, zxid as u64, 0, 0, &payload);
         if let Err(e) = wal.flush().await {
             println!("Failed to write to WAL: {}", e);
-            return Vec::new();
+            let reply_header = ReplyHeader {
+                xid: header.xid,
+                zxid: tree.last_zxid(),
+                err: ErrorCode::BadArguments,
+            };
+            return reply_header.to_bytes();
         }
         drop(wal);
 
-        match tree.set(req.path, req.data.to_vec()) {
-            Ok(_) => {
-                let node = tree.traverse(req.path).unwrap();
-                let reply_header = ReplyHeader {
-                    xid: header.xid,
-                    zxid: tree.last_zxid(),
-                    err: ErrorCode::Ok,
-                };
-                let set_res = SetDataResponse { stat: &node.stat };
-                let mut payload = reply_header.to_bytes();
-                payload
-                    .extend(set_res.to_bytes(node.data.len() as i32, node.children.len() as i32));
-                payload
-            }
-            Err(_) => {
-                let reply_header = ReplyHeader {
-                    xid: header.xid,
-                    zxid: tree.last_zxid(),
-                    err: ErrorCode::NoNode,
-                };
-                reply_header.to_bytes()
-            }
-        }
+        let _ = tree.set(req.path, req.data.to_vec(), now);
+
+        let node = tree.traverse(req.path).unwrap();
+        let reply_header = ReplyHeader {
+            xid: header.xid,
+            zxid: tree.last_zxid(),
+            err: ErrorCode::Ok,
+        };
+        let set_res = SetDataResponse { stat: &node.stat };
+        let mut payload = reply_header.to_bytes();
+        payload.extend(set_res.to_bytes(node.data.len() as i32, node.children.len() as i32));
+        payload
     }
 
     async fn handle_delete(&self, header: RequestHeader, buf: &mut &[u8]) -> Vec<u8> {
         let Some(req) = DeleteRequest::from_bytes(buf) else {
-            return Vec::new();
+            let tree = self.storage.read().await;
+            let reply_header = ReplyHeader {
+                xid: header.xid,
+                zxid: tree.last_zxid(),
+                err: ErrorCode::BadArguments,
+            };
+            return reply_header.to_bytes();
         };
 
         // Brute Force: Get the tree lock early.
         // TODO: In future, this should be pipelined
         let mut tree = self.storage.write().await;
 
-        let current_version = match tree.traverse(req.path) {
-            Some(node) => node.stat.version,
+        let node = match tree.traverse(req.path) {
+            Some(node) => node,
             None => {
                 let reply_header = ReplyHeader {
                     xid: header.xid,
@@ -383,11 +472,20 @@ impl KeeperServer {
             }
         };
 
-        if req.version != -1 && current_version != req.version {
+        if req.version != -1 && node.stat.version != req.version {
             let reply_header = ReplyHeader {
                 xid: header.xid,
                 zxid: tree.last_zxid(),
                 err: ErrorCode::BadVersion,
+            };
+            return reply_header.to_bytes();
+        }
+
+        if !node.children.is_empty() {
+            let reply_header = ReplyHeader {
+                xid: header.xid,
+                zxid: tree.last_zxid(),
+                err: ErrorCode::NotEmpty,
             };
             return reply_header.to_bytes();
         }
@@ -403,34 +501,24 @@ impl KeeperServer {
         wal.append(1, zxid as u64, 0, 0, &payload);
         if let Err(e) = wal.flush().await {
             println!("Failed to write to WAL: {}", e);
-            return Vec::new();
+            let reply_header = ReplyHeader {
+                xid: header.xid,
+                zxid: tree.last_zxid(),
+                err: ErrorCode::BadArguments,
+            };
+            return reply_header.to_bytes();
         }
         drop(wal);
 
-        match tree.delete(req.path) {
-            Ok(_) => {
-                let reply_header = ReplyHeader {
-                    xid: header.xid,
-                    zxid: tree.last_zxid(),
-                    err: ErrorCode::Ok,
-                };
-                let mut payload = reply_header.to_bytes();
-                payload.extend(EmptyResponse.to_bytes());
-                payload
-            }
-            Err(e) => {
-                let err = if e == "Node has children" {
-                    ErrorCode::NotEmpty
-                } else {
-                    ErrorCode::NoNode
-                };
-                let reply_header = ReplyHeader {
-                    xid: header.xid,
-                    zxid: tree.last_zxid(),
-                    err,
-                };
-                reply_header.to_bytes()
-            }
-        }
+        let _ = tree.delete(req.path);
+
+        let reply_header = ReplyHeader {
+            xid: header.xid,
+            zxid: tree.last_zxid(),
+            err: ErrorCode::Ok,
+        };
+        let mut payload = reply_header.to_bytes();
+        payload.extend(EmptyResponse.to_bytes());
+        payload
     }
 }

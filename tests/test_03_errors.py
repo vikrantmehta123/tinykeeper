@@ -34,7 +34,6 @@ class TestMissingNodes:
         with pytest.raises(NoNodeError):
             zk.delete("/nonexistent")
 
-    @todo(GETCHILDREN)
     def test_get_children_missing(self, zk):
         with pytest.raises(NoNodeError):
             zk.get_children("/nonexistent")
@@ -78,7 +77,6 @@ class TestExistingNodes:
 
 
 class TestDeletingParents:
-    @todo(NOT_EMPTY)
     def test_delete_a_node_that_still_has_children(self, zk):
         """NotEmpty (-111). ZooKeeper has no recursive delete on the wire:
         a client that wants one deletes the leaves itself, bottom up.
@@ -92,7 +90,6 @@ class TestDeletingParents:
 
         assert zk.exists("/notempty/child") is not None
 
-    @todo(NOT_EMPTY)
     def test_delete_becomes_possible_once_the_children_are_gone(self, zk):
         zk.create("/emptying", b"")
         zk.create("/emptying/child", b"")

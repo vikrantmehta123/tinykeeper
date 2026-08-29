@@ -61,7 +61,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let wal_path = dir.join("test.wal");
 
-        let server = Arc::new(KeeperServer::new(wal_path.to_str().unwrap()).await.unwrap());
+        let server = Arc::new(KeeperServer::new(&wal_path).await.unwrap());
         let dispatcher = KeeperDispatcher::new(server);
 
         // xid=42 (4 bytes), opcode=11/ping (4 bytes), no body needed.

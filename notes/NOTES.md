@@ -111,3 +111,60 @@ And what are the Log Entries?
 * The log entries are simply the ZooKeeper commands with their log index, parameters and payload.
 * Since the log entries need to be ordered, we need a log index. This is the zxid.
 
+## Persistent and Ephemeral Nodes
+
+Ephemeral Nodes have a lifetime. They live only as long as the session that created that node. 
+
+But they are still stored on disk and on the data tree like other nodes. It's just that a background thread cleans up these ephemeral
+nodes once the session is closed. This too has a log entry and has to go through Raft and are captured in the snapshots.
+
+Persistent nodes have no such lifetime. They persist until someone calls `delete()` on them explicitly.
+
+Why do we even have ephemeral nodes?
+Because there are several things, i.e. state, that is session scoped. For example, liveness of a client. Another example would be
+lock acquisition- locks acquired by clients are session scoped.
+
+Often, ephemeral nodes work together with "watchers", which we will cover later. Watchers are a more efficient way to detect changes in an ephemeral node.
+
+## Sequential Nodes
+
+Whether a node is sequential or not is independent of whether the node is ephemeral or persistent.
+
+A sequential node is a node whose final path is not exactly what you asked for — Keeper appends a number to it.
+
+You provide a path prefix, say `/queue/task-`. Keeper takes that prefix, looks at the parent node's sequence counter,
+and appends it as a 10-digit zero-padded number. So the actual created node might be `/queue/task-0000000000`. The next sequential create under `/queue/` produces `/queue/task-0000000001`, then `0000000002`, and so on.
+
+The sequence counter belongs to the parent node, and it only goes up — it never resets or reuses numbers, even if earlier nodes are deleted. This means every sequential node created under the same parent gets a unique, monotonically increasing number.
+
+Why do we need Sequential nodes?
+Without sequential nodes, if two clients both try to create `/queue/task-1` at the same time, one succeeds and the other gets a `ZNODEEXISTS` error. 
+The failing client has to pick a new name and retry. This is coordination overhead. With sequential nodes, both clients can create the nodes with prefix and then keeper assigns a different number.
+
+This is specifically used during leader election and a distributed queue.
+
+## Sessions
+
+A session is a logical, stateful connection between a client and the Keeper cluster. It starts when a 
+client connects, stays alive as long as the client sends heartbeats, and dies when the client goes silent for too long.
+
+Sessions are used for three things:
+
+1. Ephemeral nodes: A client can connect and create nodes and say, "Delete this node when I disconnect". Distributed locks and all come here.
+2. Watches: When a client sets a watch on a node ("tell me when this changes"), the cluster needs to know which client to notify. That binding is per-session.
+3. Authentication and ACL 
+
+How are sessions expired?
+We don't keep track of expiry of each session. We time bucket the sessions based on their expiry. All sessions are rounded up to some
+value and sessions expiring around similar time land in same expiration bucket.
+Heartbeats move session from one bucket to another.
+
+### How Are Sessions Created?
+
+Each session is uniquely identified by a session ID. The keeper is a distributed system. There can be multiple keeper servers to
+which clients can connect and send requests to. 
+
+We need to ensure that the clients are getting unique session ID regardless of the server they connect to.
+
+That's why the session ID generation has to go through Raft. The leader has to assign the session ID and then the ID has to be
+forwarded to other nodes.

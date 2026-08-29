@@ -22,6 +22,14 @@ enum WalOperation {
     Delete {
         path: String,
     },
+
+    CreateSession {
+        session_id: i64,
+        timeout_ms: i64,
+    },
+    CloseSession {
+        session_id: i64,
+    },
 }
 
 impl WalOperation {
@@ -66,6 +74,15 @@ impl KeeperServer {
                     WalOperation::Delete { path } => {
                         let _ = storage.delete(&path);
                     }
+                    WalOperation::CreateSession { session_id, timeout_ms } => {
+                        storage.session_state.restore_session(SessionId(session_id), timeout_ms);
+                    }
+                    WalOperation::CloseSession { session_id } => {
+                        let paths = storage.session_state.close_session(SessionId(session_id));
+                        for path in &paths {
+                            let _ = storage.delete(path);
+                        }
+                    }
                 }
             }
         })
@@ -82,15 +99,33 @@ impl KeeperServer {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_millis() as i64;
-        self.storage
-            .write()
-            .await
-            .session_state
-            .create_session(timeout_ms, now)
+        let mut tree = self.storage.write().await;
+        let session_id = tree.session_state.create_session(timeout_ms, now);
+    
+        let op = WalOperation::CreateSession {
+            session_id: session_id.0,
+            timeout_ms,
+        };
+        let zxid = tree.next_zxid();
+        let mut wal = self.wal.lock().await;
+        wal.append(1, zxid as u64, 0, 0, &op.serialize());
+        let _ = wal.flush().await;
+    
+        session_id
     }
-
+    
     pub async fn close_session(&self, session_id: SessionId) {
         let mut tree = self.storage.write().await;
+    
+        let op = WalOperation::CloseSession {
+            session_id: session_id.0,
+        };
+        let zxid = tree.next_zxid();
+        let mut wal = self.wal.lock().await;
+        wal.append(1, zxid as u64, 0, 0, &op.serialize());
+        let _ = wal.flush().await;
+        drop(wal);
+    
         let paths = tree.session_state.close_session(session_id);
         for path in &paths {
             let _ = tree.delete(path);

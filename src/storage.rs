@@ -93,6 +93,13 @@ impl SessionState {
     pub fn is_alive(&self, id: SessionId) -> bool {
         self.session_and_timeout.contains_key(&id)
     }
+
+    pub fn restore_session(&mut self, id: SessionId, timeout_ms: i64) {
+        self.session_and_timeout.insert(id, timeout_ms);
+        if id.0 >= self.next_session_id {
+            self.next_session_id = id.0 + 1;
+        }
+    }
 }
 
 pub struct KeeperStorage {

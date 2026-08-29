@@ -9,9 +9,19 @@ use std::time::SystemTime;
 
 #[derive(Serialize, Deserialize)]
 enum WalOperation {
-    Create { path: String, data: Vec<u8>, timestamp: i64 },
-    Set { path: String, data: Vec<u8>, timestamp: i64 },
-    Delete { path: String },
+    Create {
+        path: String,
+        data: Vec<u8>,
+        timestamp: i64,
+    },
+    Set {
+        path: String,
+        data: Vec<u8>,
+        timestamp: i64,
+    },
+    Delete {
+        path: String,
+    },
 }
 
 impl WalOperation {
@@ -39,10 +49,18 @@ impl KeeperServer {
             storage.set_last_zxid(index as i64);
             if let Some(op) = WalOperation::deserialize(&payload) {
                 match op {
-                    WalOperation::Create { path, data, timestamp } => {
+                    WalOperation::Create {
+                        path,
+                        data,
+                        timestamp,
+                    } => {
                         let _ = storage.create(&path, data, timestamp);
                     }
-                    WalOperation::Set { path, data, timestamp } => {
+                    WalOperation::Set {
+                        path,
+                        data,
+                        timestamp,
+                    } => {
                         let _ = storage.set(&path, data, timestamp);
                     }
                     WalOperation::Delete { path } => {
@@ -279,7 +297,11 @@ impl KeeperServer {
             return reply_header.to_bytes();
         }
 
-        let parent_path = if parent_path.is_empty() { "/" } else { parent_path };
+        let parent_path = if parent_path.is_empty() {
+            "/"
+        } else {
+            parent_path
+        };
 
         if !tree.exists(parent_path) {
             let reply_header = ReplyHeader {

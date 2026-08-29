@@ -70,6 +70,15 @@ pub enum ErrorCode {
     NodeExists = -110,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct SessionId(pub i64);
+
+impl SessionId {
+    pub fn to_be_bytes(&self) -> [u8; 8] {
+        self.0.to_be_bytes()
+    }
+}
+
 /// The ZooKeeper wire format specifies a Stat struct
 /// The fields in the Stat struct need to be in a specified
 /// order. Those fields are defined below in their appropriate order
@@ -80,14 +89,14 @@ pub enum ErrorCode {
 /// Those fields can be computed- so they are not defined here.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Stat {
-    pub czxid: i64,           // creation zxid
-    pub mzxid: i64,           // last modified zxid
-    pub ctime: i64,           // creation time (in ms since epoch)
-    pub mtime: i64,           // last modification time (ms since epoch)
-    pub version: i32,         // How many times has data been written?
-    pub cversion: i32,        // how many times have children changed?
-    pub aversion: i32,        // how many times did ACL change?
-    pub ephemeral_owner: i64, // session_id if ephemeral node, else 0
+    pub czxid: i64,                 // creation zxid
+    pub mzxid: i64,                 // last modified zxid
+    pub ctime: i64,                 // creation time (in ms since epoch)
+    pub mtime: i64,                 // last modification time (ms since epoch)
+    pub version: i32,               // How many times has data been written?
+    pub cversion: i32,              // how many times have children changed?
+    pub aversion: i32,              // how many times did ACL change?
+    pub ephemeral_owner: SessionId, // session_id if ephemeral node, else 0
 
     // data_length and num_children go here, before pzxid
     pub pzxid: i64, // zxid of the last children change

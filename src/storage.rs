@@ -1,7 +1,6 @@
-use crate::protocol::Stat;
+use crate::protocol::{SessionId, Stat};
 use crate::znode::Node;
 use std::collections::{HashMap, HashSet};
-
 
 pub struct KeeperStorage {
     map: HashMap<String, Node>,
@@ -39,7 +38,12 @@ impl KeeperStorage {
         self.last_zxid = zxid;
     }
 
-    pub fn create(&mut self, path: &str, data: Vec<u8>, timestamp: i64) -> Result<(), &'static str> {
+    pub fn create(
+        &mut self,
+        path: &str,
+        data: Vec<u8>,
+        timestamp: i64,
+    ) -> Result<(), &'static str> {
         let (parent_path, child_name) = match path.rsplit_once("/") {
             Some((p, c)) => (p, c),
             None => return Err("Invalid path format"),
@@ -74,7 +78,7 @@ impl KeeperStorage {
                 version: 0,
                 cversion: 0,
                 aversion: 0,
-                ephemeral_owner: 0,
+                ephemeral_owner: SessionId(0),
                 pzxid: self.last_zxid,
             },
         };

@@ -81,7 +81,7 @@ impl ConnectionHandler {
             return;
         };
 
-        let connect_response: ConnectResponse = self.dispatcher.handshake(connect_request).await;
+        let (connect_response, watch_rx) = self.dispatcher.handshake(connect_request).await;
         self.session_id = Some(SessionId(connect_response.session_id));
 
         let response_bytes = connect_response.to_bytes();

@@ -31,6 +31,11 @@ pub struct WatchEvent {
     pub payload: Vec<u8>,
 }
 
+pub struct ApplyResult {
+    pub response: Vec<u8>,
+    pub watch_events: Vec<WatchEvent>,
+}
+
 /// Forward index: given a path, which sessions are watching it?
 ///
 /// We keep separate maps for each watch type. That is, persistent watches 

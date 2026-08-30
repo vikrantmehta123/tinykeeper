@@ -1,5 +1,6 @@
 use crate::protocol::{SessionId, Stat};
 use crate::session_expiry_queue::SessionExpiryQueue;
+use crate::watch_state::WatchState;
 use crate::znode::Node;
 use std::collections::{HashMap, HashSet};
 
@@ -111,6 +112,7 @@ pub struct KeeperStorage {
     last_zxid: i64,
 
     pub session_state: SessionState,
+    pub watch_state: WatchState,
 }
 
 impl KeeperStorage {
@@ -128,6 +130,7 @@ impl KeeperStorage {
             map,
             last_zxid: 0,
             session_state: SessionState::new(interval_ms),
+            watch_state: WatchState::new(),
         }
     }
 

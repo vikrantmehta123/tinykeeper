@@ -70,6 +70,15 @@ pub enum ErrorCode {
     NodeExists = -110,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct SessionId(pub i64);
+
+impl SessionId {
+    pub fn to_be_bytes(&self) -> [u8; 8] {
+        self.0.to_be_bytes()
+    }
+}
+
 /// The ZooKeeper wire format specifies a Stat struct
 /// The fields in the Stat struct need to be in a specified
 /// order. Those fields are defined below in their appropriate order
@@ -80,14 +89,14 @@ pub enum ErrorCode {
 /// Those fields can be computed- so they are not defined here.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Stat {
-    pub czxid: i64,           // creation zxid
-    pub mzxid: i64,           // last modified zxid
-    pub ctime: i64,           // creation time (in ms since epoch)
-    pub mtime: i64,           // last modification time (ms since epoch)
-    pub version: i32,         // How many times has data been written?
-    pub cversion: i32,        // how many times have children changed?
-    pub aversion: i32,        // how many times did ACL change?
-    pub ephemeral_owner: i64, // session_id if ephemeral node, else 0
+    pub czxid: i64,                 // creation zxid
+    pub mzxid: i64,                 // last modified zxid
+    pub ctime: i64,                 // creation time (in ms since epoch)
+    pub mtime: i64,                 // last modification time (ms since epoch)
+    pub version: i32,               // How many times has data been written?
+    pub cversion: i32,              // how many times have children changed?
+    pub aversion: i32,              // how many times did ACL change?
+    pub ephemeral_owner: SessionId, // session_id if ephemeral node, else 0
 
     // data_length and num_children go here, before pzxid
     pub pzxid: i64, // zxid of the last children change
@@ -130,25 +139,36 @@ impl RequestHeader {
 pub struct CreateRequest<'a> {
     pub path: &'a str,
     pub data: &'a [u8],
+    pub flags: i32,
 }
 
 impl<'a> CreateRequest<'a> {
-    // Notice the `'a` ties the lifetime of the returned struct directly to the input buffer!
     pub fn from_bytes(buf: &mut &'a [u8]) -> Option<Self> {
         // 1. Parse Path
         let path_len = buf.get_i32() as usize;
         let (path_bytes, remaining) = buf.split_at(path_len);
         let path = std::str::from_utf8(path_bytes).ok()?;
-
-        *buf = remaining; // Manually advance the cursor
+        *buf = remaining;
 
         // 2. Parse Data
         let data_len = buf.get_i32() as usize;
         let (data, remaining) = buf.split_at(data_len);
+        *buf = remaining;
 
-        *buf = remaining; // Advance the cursor again
+        // 3. Skip ACL list
+        let acl_count = buf.get_i32();
+        for _ in 0..acl_count {
+            let _perms = buf.get_i32();
+            let scheme_len = buf.get_i32() as usize;
+            buf.advance(scheme_len);
+            let id_len = buf.get_i32() as usize;
+            buf.advance(id_len);
+        }
 
-        Some(Self { path, data })
+        // 4. Read flags
+        let flags = buf.get_i32();
+
+        Some(Self { path, data, flags })
     }
 }
 

@@ -9,9 +9,27 @@ use std::time::SystemTime;
 
 #[derive(Serialize, Deserialize)]
 enum WalOperation {
-    Create { path: String, data: Vec<u8>, timestamp: i64 },
-    Set { path: String, data: Vec<u8>, timestamp: i64 },
-    Delete { path: String },
+    Create {
+        path: String,
+        data: Vec<u8>,
+        timestamp: i64,
+    },
+    Set {
+        path: String,
+        data: Vec<u8>,
+        timestamp: i64,
+    },
+    Delete {
+        path: String,
+    },
+
+    CreateSession {
+        session_id: i64,
+        timeout_ms: i64,
+    },
+    CloseSession {
+        session_id: i64,
+    },
 }
 
 impl WalOperation {
@@ -31,7 +49,7 @@ pub struct KeeperServer {
 
 impl KeeperServer {
     pub async fn new(wal_dir: &Path) -> Result<Self, Box<dyn std::error::Error>> {
-        let mut storage = KeeperStorage::new();
+        let mut storage = KeeperStorage::new(500);
 
         let wal = WalStore::open(wal_dir, 50 * 1024 * 1024).await?;
 
@@ -39,14 +57,31 @@ impl KeeperServer {
             storage.set_last_zxid(index as i64);
             if let Some(op) = WalOperation::deserialize(&payload) {
                 match op {
-                    WalOperation::Create { path, data, timestamp } => {
-                        let _ = storage.create(&path, data, timestamp);
+                    WalOperation::Create {
+                        path,
+                        data,
+                        timestamp,
+                    } => {
+                        let _ = storage.create(&path, data, timestamp, SessionId(0), 0);
                     }
-                    WalOperation::Set { path, data, timestamp } => {
+                    WalOperation::Set {
+                        path,
+                        data,
+                        timestamp,
+                    } => {
                         let _ = storage.set(&path, data, timestamp);
                     }
                     WalOperation::Delete { path } => {
                         let _ = storage.delete(&path);
+                    }
+                    WalOperation::CreateSession { session_id, timeout_ms } => {
+                        storage.session_state.restore_session(SessionId(session_id), timeout_ms);
+                    }
+                    WalOperation::CloseSession { session_id } => {
+                        let paths = storage.session_state.close_session(SessionId(session_id));
+                        for path in &paths {
+                            let _ = storage.delete(path);
+                        }
                     }
                 }
             }
@@ -59,7 +94,53 @@ impl KeeperServer {
         })
     }
 
-    pub async fn apply(&self, payload: &[u8]) -> Vec<u8> {
+    pub async fn create_session(&self, timeout_ms: i64) -> SessionId {
+        let now = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        let mut tree = self.storage.write().await;
+        let session_id = tree.session_state.create_session(timeout_ms, now);
+    
+        let op = WalOperation::CreateSession {
+            session_id: session_id.0,
+            timeout_ms,
+        };
+        let zxid = tree.next_zxid();
+        let mut wal = self.wal.lock().await;
+        wal.append(1, zxid as u64, 0, 0, &op.serialize());
+        let _ = wal.flush().await;
+    
+        session_id
+    }
+    
+    pub async fn close_session(&self, session_id: SessionId) {
+        let mut tree = self.storage.write().await;
+    
+        let op = WalOperation::CloseSession {
+            session_id: session_id.0,
+        };
+        let zxid = tree.next_zxid();
+        let mut wal = self.wal.lock().await;
+        wal.append(1, zxid as u64, 0, 0, &op.serialize());
+        let _ = wal.flush().await;
+        drop(wal);
+    
+        let paths = tree.session_state.close_session(session_id);
+        for path in &paths {
+            let _ = tree.delete(path);
+        }
+    }
+
+    pub async fn get_expired_sessions(&self) -> Vec<SessionId> {
+        let now = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        self.storage.read().await.session_state.get_expired(now)
+    }
+
+    pub async fn apply(&self, payload: &[u8], session_id: SessionId) -> Vec<u8> {
         if payload.len() < 8 {
             println!("Message too short to be a standard request");
             let tree = self.storage.read().await;
@@ -71,6 +152,18 @@ impl KeeperServer {
             return reply_header.to_bytes();
         }
 
+        // TODO: Review the locking system end-to-end. Currently, we are holding onto the
+        // locks for long time. And that's going to add to the cost
+        let now = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        self.storage
+            .write()
+            .await
+            .session_state
+            .touch_session(session_id, now);
+
         let mut buf = payload;
         let header = RequestHeader::from_bytes(&mut buf).expect("unknown opcode");
         println!(
@@ -78,7 +171,7 @@ impl KeeperServer {
             header.xid, header.opcode
         );
         match header.opcode {
-            OpCode::Create => self.handle_create(header, &mut buf).await,
+            OpCode::Create => self.handle_create(header, &mut buf, session_id).await,
             OpCode::Get => self.handle_get(header, &mut buf).await,
             OpCode::Set => self.handle_set(header, &mut buf).await,
             OpCode::Remove => self.handle_delete(header, &mut buf).await,
@@ -95,7 +188,11 @@ impl KeeperServer {
             OpCode::List => self.handle_get_children(header, &mut buf).await,
             OpCode::Exists => self.handle_exists(header, &mut buf).await,
             OpCode::Close => {
-                let tree = self.storage.read().await;
+                let mut tree = self.storage.write().await;
+                let paths = tree.session_state.close_session(session_id);
+                for path in &paths {
+                    let _ = tree.delete(path);
+                }
                 let reply_header = ReplyHeader {
                     xid: header.xid,
                     zxid: tree.last_zxid(),
@@ -235,7 +332,12 @@ impl KeeperServer {
             }
         }
     }
-    async fn handle_create(&self, header: RequestHeader, buf: &mut &[u8]) -> Vec<u8> {
+    async fn handle_create(
+        &self,
+        header: RequestHeader,
+        buf: &mut &[u8],
+        session_id: SessionId,
+    ) -> Vec<u8> {
         let Some(req) = CreateRequest::from_bytes(buf) else {
             println!("Failed to parse CreateRequest payload!");
             let tree = self.storage.read().await;
@@ -279,7 +381,11 @@ impl KeeperServer {
             return reply_header.to_bytes();
         }
 
-        let parent_path = if parent_path.is_empty() { "/" } else { parent_path };
+        let parent_path = if parent_path.is_empty() {
+            "/"
+        } else {
+            parent_path
+        };
 
         if !tree.exists(parent_path) {
             let reply_header = ReplyHeader {
@@ -317,7 +423,7 @@ impl KeeperServer {
         }
         drop(wal);
 
-        let _ = tree.create(req.path, req.data.to_vec(), now);
+        let _ = tree.create(req.path, req.data.to_vec(), now, session_id, req.flags);
 
         let reply_header = ReplyHeader {
             xid: header.xid,
@@ -510,7 +616,11 @@ impl KeeperServer {
         }
         drop(wal);
 
+        let owner = tree.traverse(req.path).unwrap().stat.ephemeral_owner;
         let _ = tree.delete(req.path);
+        if owner != SessionId(0) {
+            tree.session_state.remove_ephemeral(owner, req.path);
+        }
 
         let reply_header = ReplyHeader {
             xid: header.xid,

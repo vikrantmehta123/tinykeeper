@@ -103,7 +103,6 @@ class TestSessionLifetime:
         data, _stat = second.get("/handoff")
         assert data == b"v1"
 
-    @todo(SESSIONS)
     def test_session_survives_a_broken_connection(self, keeper):
         """Kill the TCP connection out from under the client. Kazoo opens a
         new one and presents the old session id and password; the server

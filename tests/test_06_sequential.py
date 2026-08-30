@@ -36,7 +36,6 @@ class TestSequentialNaming:
         path = zk.create("/seq_zero/n-", b"", sequence=True)
         assert path == "/seq_zero/n-0000000000"
 
-    @todo(SEQUENTIAL)
     def test_the_returned_path_is_the_real_one(self, zk):
         """The client only learns the generated name from the reply, so the
         path in that reply has to be the path that was actually created."""
@@ -124,7 +123,6 @@ class TestSequentialAndEphemeral:
     the node disappears if the holder dies, and the number says whose turn
     it is."""
 
-    @todo(EPHEMERAL)
     def test_a_node_can_be_both(self, zk):
         zk.create("/lock", b"")
         path = zk.create("/lock/held-", b"", sequence=True, ephemeral=True)
@@ -133,7 +131,6 @@ class TestSequentialAndEphemeral:
         _data, stat = zk.get(path)
         assert stat.ephemeralOwner == zk.client_id[0]
 
-    @todo(EPHEMERAL)
     def test_the_lock_is_released_when_the_holder_disconnects(self, keeper):
         holder = keeper.client()
         holder.create("/lock_release", b"")

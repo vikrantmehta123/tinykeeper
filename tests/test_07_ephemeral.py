@@ -19,7 +19,6 @@ from markers import EPHEMERAL, SESSIONS, needs_restart, slow, todo
 
 
 class TestOwnership:
-    @todo(EPHEMERAL)
     def test_ephemeral_owner_is_the_creating_session(self, zk):
         """`ephemeralOwner` is how a client tells "this is mine" from
         "this is someone else's" — the basis of every lock recipe."""
@@ -32,14 +31,12 @@ class TestOwnership:
         _data, stat = zk.get("/not_mine")
         assert stat.ephemeralOwner == 0
 
-    @todo(EPHEMERAL)
     def test_an_ephemeral_node_is_visible_to_other_sessions(self, zk, zk2):
         zk.create("/visible", b"alive", ephemeral=True)
         data, stat = zk2.get("/visible")
         assert data == b"alive"
         assert stat.ephemeralOwner == zk.client_id[0]
 
-    @todo(EPHEMERAL)
     def test_an_ephemeral_node_behaves_normally_while_it_lives(self, zk):
         zk.create("/normal", b"v0", ephemeral=True)
         zk.set("/normal", b"v1")
@@ -57,7 +54,6 @@ class TestOwnership:
 
 
 class TestReaping:
-    @todo(EPHEMERAL)
     def test_reaped_when_the_session_closes(self, keeper):
         owner = keeper.client()
         owner.create("/eph_close", b"temp", ephemeral=True)
@@ -73,7 +69,6 @@ class TestReaping:
             message="ephemeral node outlived its session",
         )
 
-    @todo(EPHEMERAL)
     def test_persistent_nodes_are_not_reaped(self, keeper):
         owner = keeper.client()
         owner.create("/kept", b"data")
@@ -86,7 +81,6 @@ class TestReaping:
         assert observer.exists("/kept") is not None
 
     @slow
-    @todo(SESSIONS)
     def test_reaped_when_the_session_times_out(self, keeper):
         """The client is killed with SIGKILL: no Close request, no TCP
         shutdown handshake it can rely on. The server has to notice that the
@@ -113,14 +107,12 @@ class TestReaping:
             message="session never expired, so the ephemeral node was never reaped",
         )
 
-    @todo(EPHEMERAL)
     def test_another_session_may_delete_someone_elses_ephemeral_node(self, zk, zk2):
         """Ownership decides who it dies with, not who may delete it."""
         zk.create("/deletable", b"", ephemeral=True)
         zk2.delete("/deletable")
         assert zk.exists("/deletable") is None
 
-    @todo(EPHEMERAL)
     def test_only_the_dead_sessions_nodes_are_reaped(self, keeper):
         doomed = keeper.client()
         survivor = keeper.client()

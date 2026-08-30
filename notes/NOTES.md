@@ -168,3 +168,26 @@ We need to ensure that the clients are getting unique session ID regardless of t
 
 That's why the session ID generation has to go through Raft. The leader has to assign the session ID and then the ID has to be
 forwarded to other nodes.
+
+## Watches
+
+Watches are part of ZooKeeper protocol. It's for event-drive notifications.
+
+Instead of clients polling for changes, a client says "give me this value, and also notify me if it changes." The server remembers the interest and pushes a small notification when the value changes.
+
+In initial versions of ZooKeeper, there were only one-shot watches. The server pushes notification for one change event and then it stops. If the client wants to keep listening to events, it had to re-register.
+
+This led to some problems in high-churn systems, where change events would get missed in the small window of re-registering. So ZooKeeper introduced persistent watches in later versions of the protocol.
+
+### How is a Watch part of the protocol?
+
+There is no separate request for Watch. Watch is always piggybacked onto a read request- it's typically a flag in the read request. So the interpretation is: read this node and then watch it. 
+
+We don't have watches in write requests. Not all read requests have watches as well. The following read requests have watch flags:
+
+1. getData
+2. exists
+3. getChildren
+
+However, persistent watches ( introduced in later versions ) have a separate request for them.
+

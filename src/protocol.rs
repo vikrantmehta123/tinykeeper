@@ -213,6 +213,7 @@ impl EmptyResponse {
 
 pub struct GetDataRequest<'a> {
     pub path: &'a str,
+    pub watch: bool, 
 }
 impl<'a> GetDataRequest<'a> {
     pub fn from_bytes(buf: &mut &'a [u8]) -> Option<Self> {
@@ -220,7 +221,10 @@ impl<'a> GetDataRequest<'a> {
         let (path_bytes, remaining) = buf.split_at(path_len);
         let path = std::str::from_utf8(path_bytes).ok()?;
         *buf = remaining;
-        Some(Self { path })
+
+        let watch = buf.get_u8() != 0;
+
+        Some(Self { path, watch })
     }
 }
 
@@ -403,6 +407,38 @@ pub struct ExistsResponse<'a> {
 impl<'a> ExistsResponse<'a> {
     pub fn to_bytes(&self, data_length: i32, num_children: i32) -> Vec<u8> {
         self.stat.to_bytes(data_length, num_children)
+    }
+}
+
+#[derive(Clone, Copy)]
+#[repr(i32)]
+pub enum WatchEventType {
+    Created  = 1,
+    Deleted  = 2,
+    Changed  = 3,
+    Child    = 4,
+}
+
+pub struct WatchNotification<'a> {
+    pub event_type: WatchEventType,
+    pub path: &'a str,
+}
+
+impl<'a> WatchNotification<'a> {
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut buf = Vec::new();
+
+        // Hardcoded values for different fields in the response of the 
+        // watch notification
+        buf.extend_from_slice(&(-1i32).to_be_bytes());   // xid = -1 as i32
+        buf.extend_from_slice(&(-1i64).to_be_bytes()); // zxid = -1 as i64
+        buf.extend_from_slice(&(0i32).to_be_bytes()); // err = 0 as i32
+        buf.extend_from_slice(&(self.event_type as i32).to_be_bytes()); // event_type as i32
+        buf.extend_from_slice(&(3i32).to_be_bytes()); // state = 3
+        let path_len = self.path.len() as i32;
+        buf.extend_from_slice(&path_len.to_be_bytes());
+        buf.extend_from_slice(self.path.as_bytes()); 
+        buf
     }
 }
 

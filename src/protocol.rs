@@ -63,6 +63,7 @@ impl TryFrom<i32> for OpCode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ErrorCode {
     Ok = 0,
+    SystemError = -1,
     BadArguments = -8,
     NoNode = -101,
     BadVersion = -103,
@@ -89,12 +90,13 @@ impl SessionId {
 /// Those fields can be computed- so they are not defined here.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Stat {
-    pub czxid: i64,                 // creation zxid
-    pub mzxid: i64,                 // last modified zxid
-    pub ctime: i64,                 // creation time (in ms since epoch)
-    pub mtime: i64,                 // last modification time (ms since epoch)
-    pub version: i32,               // How many times has data been written?
-    pub cversion: i32,              // how many times have children changed?
+    pub czxid: i64,    // creation zxid
+    pub mzxid: i64,    // last modified zxid
+    pub ctime: i64,    // creation time (in ms since epoch)
+    pub mtime: i64,    // last modification time (ms since epoch)
+    pub version: i32,  // How many times has data been written?
+    pub cversion: i32, // how many times have children changed?
+    // This is also used as seq_num for sequential nodes
     pub aversion: i32,              // how many times did ACL change?
     pub ephemeral_owner: SessionId, // session_id if ephemeral node, else 0
 
@@ -213,7 +215,7 @@ impl EmptyResponse {
 
 pub struct GetDataRequest<'a> {
     pub path: &'a str,
-    pub watch: bool, 
+    pub watch: bool,
 }
 impl<'a> GetDataRequest<'a> {
     pub fn from_bytes(buf: &mut &'a [u8]) -> Option<Self> {
@@ -413,10 +415,10 @@ impl<'a> ExistsResponse<'a> {
 #[derive(Clone, Copy)]
 #[repr(i32)]
 pub enum WatchEventType {
-    Created  = 1,
-    Deleted  = 2,
-    Changed  = 3,
-    Child    = 4,
+    Created = 1,
+    Deleted = 2,
+    Changed = 3,
+    Child = 4,
 }
 
 pub struct WatchNotification<'a> {
@@ -428,16 +430,16 @@ impl<'a> WatchNotification<'a> {
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut buf = Vec::new();
 
-        // Hardcoded values for different fields in the response of the 
+        // Hardcoded values for different fields in the response of the
         // watch notification
-        buf.extend_from_slice(&(-1i32).to_be_bytes());   // xid = -1 as i32
+        buf.extend_from_slice(&(-1i32).to_be_bytes()); // xid = -1 as i32
         buf.extend_from_slice(&(-1i64).to_be_bytes()); // zxid = -1 as i64
         buf.extend_from_slice(&(0i32).to_be_bytes()); // err = 0 as i32
         buf.extend_from_slice(&(self.event_type as i32).to_be_bytes()); // event_type as i32
         buf.extend_from_slice(&(3i32).to_be_bytes()); // state = 3
         let path_len = self.path.len() as i32;
         buf.extend_from_slice(&path_len.to_be_bytes());
-        buf.extend_from_slice(self.path.as_bytes()); 
+        buf.extend_from_slice(self.path.as_bytes());
         buf
     }
 }

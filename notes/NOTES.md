@@ -191,3 +191,25 @@ We don't have watches in write requests. Not all read requests have watches as w
 
 However, persistent watches ( introduced in later versions ) have a separate request for them.
 
+## Sequential Nodes
+
+When you create a znode, you can pass a flag called `SEQUENTIAL`. When you do, the server doesn't create the node with exactly the name you asked for — instead, it appends a monotonically increasing counter to the name you gave.
+
+The core problem sequential nodes solve is: multiple clients need to independently create entries under the same path, and they need a global, conflict-free ordering of who came first.
+
+The Keeper server is the single authority that assigns the number, so there's no conflict and no ambiguity about who was first.
+
+For ClickHouse, sequential nodes are used for distributed DDL queue (e.g. ALTER TABLE) and for replicated merge tree table's entries.
+
+The sequential counter is stored on the parent node- not the node itself! 
+
+Ephemeral nodes cannot have children so they don't also need a sequential counter. 
+
+ClickHouse does bit-packing using the above information. It either packs the ephemeral_owner or the num_children + seq_num.
+
+In clickhouse, regardless of whether you create a sequential node or non-sequential, you increment counter when you create the child.
+
+The counter reflects all the child creations- not just the sequential ones. This is done because it guarantees that the counter never 
+produces collisions. Otherwise, you need some other mechanism to ensure that there is never a collision between names of sequential and
+non-sequential nodes.
+

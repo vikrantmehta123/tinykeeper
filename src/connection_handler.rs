@@ -1,10 +1,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
 use crate::dispatcher::KeeperDispatcher;
 use crate::protocol::{ConnectRequest, SessionId};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
 
 async fn read_frame(
     reader: &mut (impl AsyncReadExt + Unpin),
@@ -43,10 +43,7 @@ async fn read_frame(
     }
 }
 
-async fn write_frame(
-    writer: &mut (impl AsyncWriteExt + Unpin),
-    data: &[u8],
-) -> bool {
+async fn write_frame(writer: &mut (impl AsyncWriteExt + Unpin), data: &[u8]) -> bool {
     let length = data.len() as i32;
     if writer.write_all(&length.to_be_bytes()).await.is_err() {
         return false;

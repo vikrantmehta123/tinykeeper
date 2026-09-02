@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{RwLock, mpsc};
 
 use crate::keeper_server::KeeperServer;
 use crate::protocol::SessionId;
@@ -54,11 +54,17 @@ impl KeeperDispatcher {
         result.response
     }
 
-    pub async fn handshake(&self, request: ConnectRequest) -> (ConnectResponse, mpsc::Receiver<Vec<u8>>) {
+    pub async fn handshake(
+        &self,
+        request: ConnectRequest,
+    ) -> (ConnectResponse, mpsc::Receiver<Vec<u8>>) {
         let session_id = self.server.create_session(request.timeout_ms as i64).await;
 
         let (tx, rx) = mpsc::channel(64);
-        self.watch_senders.write().await.insert(SessionId(session_id.0), tx);
+        self.watch_senders
+            .write()
+            .await
+            .insert(SessionId(session_id.0), tx);
 
         let response = ConnectResponse {
             protocol_version: request.protocol_version,

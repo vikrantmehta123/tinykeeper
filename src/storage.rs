@@ -1,5 +1,6 @@
 use crate::protocol::{SessionId, Stat};
 use crate::session_expiry_queue::SessionExpiryQueue;
+use crate::watch_state::WatchState;
 use crate::znode::Node;
 use std::collections::{HashMap, HashSet};
 
@@ -111,6 +112,7 @@ pub struct KeeperStorage {
     last_zxid: i64,
 
     pub session_state: SessionState,
+    pub watch_state: WatchState,
 }
 
 impl KeeperStorage {
@@ -128,6 +130,7 @@ impl KeeperStorage {
             map,
             last_zxid: 0,
             session_state: SessionState::new(interval_ms),
+            watch_state: WatchState::new(),
         }
     }
 
@@ -144,7 +147,6 @@ impl KeeperStorage {
         self.last_zxid = zxid;
     }
 
-    #[allow(clippy::collapsible_if)]
     pub fn create(
         &mut self,
         path: &str,
@@ -152,7 +154,7 @@ impl KeeperStorage {
         timestamp: i64,
         session_id: SessionId,
         flags: i32,
-    ) -> Result<(), &'static str> {
+    ) -> Result<String, &'static str> {
         let (parent_path, child_name) = match path.rsplit_once("/") {
             Some((p, c)) => (p, c),
             None => return Err("Invalid path format"),
@@ -168,19 +170,16 @@ impl KeeperStorage {
             parent_path
         };
 
-        if !self.map.contains_key(parent_path) {
-            return Err("Parent node does not exist");
+        let parent = self
+            .map
+            .get(parent_path)
+            .ok_or("Parent node does not exist")?;
+        if parent.stat.ephemeral_owner != SessionId(0) {
+            return Err("Cannot create child under ephemeral node");
         }
-
-        if self.map.contains_key(path) {
-            return Err("Node already exists");
-        }
-
-        if let Some(parent) = self.map.get(parent_path) {
-            if parent.stat.ephemeral_owner != SessionId(0) {
-                return Err("Cannot create child under ephemeral node");
-            }
-        }
+        // Sequential suffixes uses cversion. Note: delete() also bumps
+        // cversion, so suffixes can skip numbers. Matches ZooKeeper.
+        let seq_num = parent.stat.cversion;
 
         let new_node = Node {
             data,
@@ -202,21 +201,37 @@ impl KeeperStorage {
             },
         };
 
-        // Mutation 1: insert the new node
-        self.map.insert(path.to_string(), new_node);
+        let path_created = if flags & 2 != 0 {
+            format!("{}{:010}", path, seq_num)
+        } else {
+            path.to_string()
+        };
 
-        if flags & 1 != 0 {
-            self.session_state
-                .add_ephemeral(session_id, path.to_string());
+        if self.map.contains_key(&path_created) {
+            return Err("Node already exists");
         }
 
-        // Mutation 2: update the parent
+        // Mutation 1: insert the new node
+        self.map.insert(path_created.clone(), new_node);
+
+        // Mutation 2: Add ephemeral node
+        // NOTE: We need to add the ephemeral only after the node has been
+        // added in the tree
+        if flags & 1 != 0 {
+            self.session_state
+                .add_ephemeral(session_id, path_created.clone());
+        }
+
+        // Mutation 3: update the parent
         let parent = self.map.get_mut(parent_path).unwrap();
+        let (_, child_name) = path_created.rsplit_once("/").unwrap();
         parent.children.insert(child_name.to_string());
+
+        // TODO: What to do if this wraps around?
         parent.stat.cversion += 1;
         parent.stat.pzxid = self.last_zxid;
 
-        Ok(())
+        Ok(path_created)
     }
 
     pub fn traverse(&self, path: &str) -> Option<&Node> {

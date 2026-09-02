@@ -1,12 +1,17 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
+
+use tokio::sync::{RwLock, mpsc};
 
 use crate::keeper_server::KeeperServer;
 use crate::protocol::SessionId;
 use crate::protocol::{ConnectRequest, ConnectResponse};
+use crate::watch_state::ApplyResult;
 
 pub struct KeeperDispatcher {
     server: Arc<KeeperServer>,
+    watch_senders: RwLock<HashMap<SessionId, mpsc::Sender<Vec<u8>>>>,
 }
 
 impl KeeperDispatcher {
@@ -22,8 +27,11 @@ impl KeeperDispatcher {
                 }
             }
         });
-    
-        KeeperDispatcher { server }
+
+        KeeperDispatcher {
+            server,
+            watch_senders: RwLock::new(HashMap::new()),
+        }
     }
 
     pub async fn dispatch(&self, payload: Vec<u8>, session_id: SessionId) -> Vec<u8> {
@@ -31,18 +39,45 @@ impl KeeperDispatcher {
 
         let handle = tokio::spawn(async move { server.apply(&payload, session_id).await });
 
-        handle.await.unwrap_or_default()
+        let result = handle.await.unwrap_or_else(|_| ApplyResult {
+            response: vec![],
+            watch_events: vec![],
+        });
+
+        let senders = self.watch_senders.read().await;
+        for event in result.watch_events {
+            if let Some(tx) = senders.get(&event.session_id) {
+                let _ = tx.send(event.payload).await;
+            }
+        }
+
+        result.response
     }
 
-    pub async fn handshake(&self, request: ConnectRequest) -> ConnectResponse {
+    pub async fn handshake(
+        &self,
+        request: ConnectRequest,
+    ) -> (ConnectResponse, mpsc::Receiver<Vec<u8>>) {
         let session_id = self.server.create_session(request.timeout_ms as i64).await;
 
-        ConnectResponse {
+        let (tx, rx) = mpsc::channel(64);
+        self.watch_senders
+            .write()
+            .await
+            .insert(SessionId(session_id.0), tx);
+
+        let response = ConnectResponse {
             protocol_version: request.protocol_version,
             timeout_ms: request.timeout_ms,
             session_id: session_id.0,
             password: Vec::new(),
-        }
+        };
+
+        (response, rx)
+    }
+
+    pub async fn remove_watch_sender(&self, session_id: SessionId) {
+        self.watch_senders.write().await.remove(&session_id);
     }
 
     pub fn shutdown(&self) {

@@ -168,3 +168,48 @@ We need to ensure that the clients are getting unique session ID regardless of t
 
 That's why the session ID generation has to go through Raft. The leader has to assign the session ID and then the ID has to be
 forwarded to other nodes.
+
+## Watches
+
+Watches are part of ZooKeeper protocol. It's for event-drive notifications.
+
+Instead of clients polling for changes, a client says "give me this value, and also notify me if it changes." The server remembers the interest and pushes a small notification when the value changes.
+
+In initial versions of ZooKeeper, there were only one-shot watches. The server pushes notification for one change event and then it stops. If the client wants to keep listening to events, it had to re-register.
+
+This led to some problems in high-churn systems, where change events would get missed in the small window of re-registering. So ZooKeeper introduced persistent watches in later versions of the protocol.
+
+### How is a Watch part of the protocol?
+
+There is no separate request for Watch. Watch is always piggybacked onto a read request- it's typically a flag in the read request. So the interpretation is: read this node and then watch it. 
+
+We don't have watches in write requests. Not all read requests have watches as well. The following read requests have watch flags:
+
+1. getData
+2. exists
+3. getChildren
+
+However, persistent watches ( introduced in later versions ) have a separate request for them.
+
+## Sequential Nodes
+
+When you create a znode, you can pass a flag called `SEQUENTIAL`. When you do, the server doesn't create the node with exactly the name you asked for — instead, it appends a monotonically increasing counter to the name you gave.
+
+The core problem sequential nodes solve is: multiple clients need to independently create entries under the same path, and they need a global, conflict-free ordering of who came first.
+
+The Keeper server is the single authority that assigns the number, so there's no conflict and no ambiguity about who was first.
+
+For ClickHouse, sequential nodes are used for distributed DDL queue (e.g. ALTER TABLE) and for replicated merge tree table's entries.
+
+The sequential counter is stored on the parent node- not the node itself! 
+
+Ephemeral nodes cannot have children so they don't also need a sequential counter. 
+
+ClickHouse does bit-packing using the above information. It either packs the ephemeral_owner or the num_children + seq_num.
+
+In clickhouse, regardless of whether you create a sequential node or non-sequential, you increment counter when you create the child.
+
+The counter reflects all the child creations- not just the sequential ones. This is done because it guarantees that the counter never 
+produces collisions. Otherwise, you need some other mechanism to ensure that there is never a collision between names of sequential and
+non-sequential nodes.
+

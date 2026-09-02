@@ -83,7 +83,6 @@ class TestZkCli:
         assert "(CONNECTED)" in output, output
         assert "Exception" not in output, output
 
-    @todo(GETCHILDREN)
     def test_zkcli_round_trip(self, zkcli, keeper):
         """Create, read, list, update, delete — the operator's whole
         vocabulary, through somebody else's client."""
@@ -108,7 +107,6 @@ class TestZkCli:
         client = keeper.client()
         assert client.exists("/zkcli_node") is None
 
-    @todo(GETCHILDREN)
     def test_zkcli_stat_output(self, zkcli, keeper):
         """`ls -s` asks for children *and* the parent's stat (GetChildren2),
         and `stat` asks for it alone. Both print the fields, so a wrong or

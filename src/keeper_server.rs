@@ -3,6 +3,7 @@ use tokio::sync::{Mutex, RwLock};
 use crate::changelog::WalStore;
 use crate::protocol::*;
 use crate::storage::KeeperStorage;
+use crate::watch_state::{ApplyResult, WatchType};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::time::SystemTime;
@@ -13,6 +14,8 @@ enum WalOperation {
         path: String,
         data: Vec<u8>,
         timestamp: i64,
+        flags: i32,
+        session_id: i64,
     },
     Set {
         path: String,
@@ -55,33 +58,47 @@ impl KeeperServer {
 
         wal.replay(|index, _term, payload| {
             storage.set_last_zxid(index as i64);
-            if let Some(op) = WalOperation::deserialize(&payload) {
-                match op {
-                    WalOperation::Create {
-                        path,
-                        data,
-                        timestamp,
-                    } => {
-                        let _ = storage.create(&path, data, timestamp, SessionId(0), 0);
-                    }
-                    WalOperation::Set {
-                        path,
-                        data,
-                        timestamp,
-                    } => {
-                        let _ = storage.set(&path, data, timestamp);
-                    }
-                    WalOperation::Delete { path } => {
-                        let _ = storage.delete(&path);
-                    }
-                    WalOperation::CreateSession { session_id, timeout_ms } => {
-                        storage.session_state.restore_session(SessionId(session_id), timeout_ms);
-                    }
-                    WalOperation::CloseSession { session_id } => {
-                        let paths = storage.session_state.close_session(SessionId(session_id));
-                        for path in &paths {
-                            let _ = storage.delete(path);
-                        }
+            let op = WalOperation::deserialize(&payload).expect("corrupt WAL entry during replay");
+            match op {
+                WalOperation::Create {
+                    path,
+                    data,
+                    timestamp,
+                    flags,
+                    session_id,
+                } => {
+                    storage
+                        .create(&path, data, timestamp, SessionId(session_id), flags)
+                        .expect("WAL replay of Create failed: log is inconsistent with state");
+                }
+                WalOperation::Set {
+                    path,
+                    data,
+                    timestamp,
+                } => {
+                    storage
+                        .set(&path, data, timestamp)
+                        .expect("WAL replay of Set failed: log is inconsistent with state");
+                }
+                WalOperation::Delete { path } => {
+                    storage
+                        .delete(&path)
+                        .expect("WAL replay of Delete failed: log is inconsistent with state");
+                }
+                WalOperation::CreateSession {
+                    session_id,
+                    timeout_ms,
+                } => {
+                    storage
+                        .session_state
+                        .restore_session(SessionId(session_id), timeout_ms);
+                }
+                WalOperation::CloseSession { session_id } => {
+                    let paths = storage.session_state.close_session(SessionId(session_id));
+                    for path in &paths {
+                        storage
+                            .delete(path)
+                            .expect("WAL replay of CloseSession cleanup failed");
                     }
                 }
             }
@@ -101,7 +118,7 @@ impl KeeperServer {
             .as_millis() as i64;
         let mut tree = self.storage.write().await;
         let session_id = tree.session_state.create_session(timeout_ms, now);
-    
+
         let op = WalOperation::CreateSession {
             session_id: session_id.0,
             timeout_ms,
@@ -110,13 +127,13 @@ impl KeeperServer {
         let mut wal = self.wal.lock().await;
         wal.append(1, zxid as u64, 0, 0, &op.serialize());
         let _ = wal.flush().await;
-    
+
         session_id
     }
-    
+
     pub async fn close_session(&self, session_id: SessionId) {
         let mut tree = self.storage.write().await;
-    
+
         let op = WalOperation::CloseSession {
             session_id: session_id.0,
         };
@@ -125,7 +142,7 @@ impl KeeperServer {
         wal.append(1, zxid as u64, 0, 0, &op.serialize());
         let _ = wal.flush().await;
         drop(wal);
-    
+
         let paths = tree.session_state.close_session(session_id);
         for path in &paths {
             let _ = tree.delete(path);
@@ -140,7 +157,7 @@ impl KeeperServer {
         self.storage.read().await.session_state.get_expired(now)
     }
 
-    pub async fn apply(&self, payload: &[u8], session_id: SessionId) -> Vec<u8> {
+    pub async fn apply(&self, payload: &[u8], session_id: SessionId) -> ApplyResult {
         if payload.len() < 8 {
             println!("Message too short to be a standard request");
             let tree = self.storage.read().await;
@@ -149,7 +166,10 @@ impl KeeperServer {
                 zxid: tree.last_zxid(),
                 err: ErrorCode::BadArguments,
             };
-            return reply_header.to_bytes();
+            return ApplyResult {
+                response: reply_header.to_bytes(),
+                watch_events: vec![],
+            };
         }
 
         // TODO: Review the locking system end-to-end. Currently, we are holding onto the
@@ -172,9 +192,9 @@ impl KeeperServer {
         );
         match header.opcode {
             OpCode::Create => self.handle_create(header, &mut buf, session_id).await,
-            OpCode::Get => self.handle_get(header, &mut buf).await,
-            OpCode::Set => self.handle_set(header, &mut buf).await,
-            OpCode::Remove => self.handle_delete(header, &mut buf).await,
+            OpCode::Get => self.handle_get(header, &mut buf, session_id).await,
+            OpCode::Set => self.handle_set(header, &mut buf, session_id).await,
+            OpCode::Remove => self.handle_delete(header, &mut buf, session_id).await,
             OpCode::Heartbeat => {
                 let tree = self.storage.read().await;
                 let reply_header = ReplyHeader {
@@ -182,23 +202,33 @@ impl KeeperServer {
                     zxid: tree.last_zxid(),
                     err: ErrorCode::Ok,
                 };
-                reply_header.to_bytes()
+                ApplyResult {
+                    response: reply_header.to_bytes(),
+                    watch_events: vec![],
+                }
             }
-            OpCode::SimpleList => self.handle_get_children_simple(header, &mut buf).await,
-            OpCode::List => self.handle_get_children(header, &mut buf).await,
-            OpCode::Exists => self.handle_exists(header, &mut buf).await,
+            OpCode::SimpleList => {
+                self.handle_get_children_simple(header, &mut buf, session_id)
+                    .await
+            }
+            OpCode::List => self.handle_get_children(header, &mut buf, session_id).await,
+            OpCode::Exists => self.handle_exists(header, &mut buf, session_id).await,
             OpCode::Close => {
                 let mut tree = self.storage.write().await;
                 let paths = tree.session_state.close_session(session_id);
                 for path in &paths {
                     let _ = tree.delete(path);
                 }
+                tree.watch_state.clear(session_id);
                 let reply_header = ReplyHeader {
                     xid: header.xid,
                     zxid: tree.last_zxid(),
                     err: ErrorCode::Ok,
                 };
-                reply_header.to_bytes()
+                ApplyResult {
+                    response: reply_header.to_bytes(),
+                    watch_events: vec![],
+                }
             }
             _ => {
                 println!("Received unimplemented OpCode: {:?}", header.opcode);
@@ -208,11 +238,19 @@ impl KeeperServer {
                     zxid: tree.last_zxid(),
                     err: ErrorCode::BadArguments,
                 };
-                reply_header.to_bytes()
+                ApplyResult {
+                    response: reply_header.to_bytes(),
+                    watch_events: vec![],
+                }
             }
         }
     }
-    async fn handle_exists(&self, header: RequestHeader, buf: &mut &[u8]) -> Vec<u8> {
+    async fn handle_exists(
+        &self,
+        header: RequestHeader,
+        buf: &mut &[u8],
+        session_id: SessionId,
+    ) -> ApplyResult {
         let Some(req) = ExistsRequest::from_bytes(buf) else {
             let tree = self.storage.read().await;
             let reply_header = ReplyHeader {
@@ -220,10 +258,19 @@ impl KeeperServer {
                 zxid: tree.last_zxid(),
                 err: ErrorCode::BadArguments,
             };
-            return reply_header.to_bytes();
+            return ApplyResult {
+                response: reply_header.to_bytes(),
+                watch_events: vec![],
+            };
         };
 
-        let tree = self.storage.read().await;
+        let mut tree = self.storage.write().await;
+
+        if req.watch {
+            tree.watch_state
+                .register(session_id, req.path.to_string(), WatchType::Watch);
+        }
+
         match tree.traverse(req.path) {
             Some(node) => {
                 let reply_header = ReplyHeader {
@@ -232,9 +279,12 @@ impl KeeperServer {
                     err: ErrorCode::Ok,
                 };
                 let res = ExistsResponse { stat: &node.stat };
-                let mut payload = reply_header.to_bytes();
-                payload.extend(res.to_bytes(node.data.len() as i32, node.children.len() as i32));
-                payload
+                let mut response = reply_header.to_bytes();
+                response.extend(res.to_bytes(node.data.len() as i32, node.children.len() as i32));
+                ApplyResult {
+                    response,
+                    watch_events: vec![],
+                }
             }
             None => {
                 let reply_header = ReplyHeader {
@@ -242,12 +292,20 @@ impl KeeperServer {
                     zxid: tree.last_zxid(),
                     err: ErrorCode::NoNode,
                 };
-                reply_header.to_bytes()
+                ApplyResult {
+                    response: reply_header.to_bytes(),
+                    watch_events: vec![],
+                }
             }
         }
     }
 
-    async fn handle_get_children(&self, header: RequestHeader, buf: &mut &[u8]) -> Vec<u8> {
+    async fn handle_get_children(
+        &self,
+        header: RequestHeader,
+        buf: &mut &[u8],
+        session_id: SessionId,
+    ) -> ApplyResult {
         let Some(req) = GetChildrenRequest::from_bytes(buf) else {
             let tree = self.storage.read().await;
             let reply_header = ReplyHeader {
@@ -255,9 +313,19 @@ impl KeeperServer {
                 zxid: tree.last_zxid(),
                 err: ErrorCode::BadArguments,
             };
-            return reply_header.to_bytes();
+            return ApplyResult {
+                response: reply_header.to_bytes(),
+                watch_events: vec![],
+            };
         };
-        let tree = self.storage.read().await;
+
+        let mut tree = self.storage.write().await;
+
+        if req.watch {
+            tree.watch_state
+                .register(session_id, req.path.to_string(), WatchType::ListWatch);
+        }
+
         match tree.traverse(req.path) {
             Some(node) => {
                 let reply_header = ReplyHeader {
@@ -269,17 +337,20 @@ impl KeeperServer {
                 let mut children: Vec<&String> = node.children.iter().collect();
                 children.sort();
 
-                let mut payload = reply_header.to_bytes();
+                let mut response = reply_header.to_bytes();
 
                 let res = GetChildrenResponse {
                     children: &children,
                 };
-                payload.extend(res.to_bytes());
-                payload.extend(
+                response.extend(res.to_bytes());
+                response.extend(
                     node.stat
                         .to_bytes(node.data.len() as i32, node.children.len() as i32),
                 );
-                payload
+                ApplyResult {
+                    response,
+                    watch_events: vec![],
+                }
             }
             None => {
                 let reply_header = ReplyHeader {
@@ -287,12 +358,20 @@ impl KeeperServer {
                     zxid: tree.last_zxid(),
                     err: ErrorCode::NoNode,
                 };
-                reply_header.to_bytes()
+                ApplyResult {
+                    response: reply_header.to_bytes(),
+                    watch_events: vec![],
+                }
             }
         }
     }
 
-    async fn handle_get_children_simple(&self, header: RequestHeader, buf: &mut &[u8]) -> Vec<u8> {
+    async fn handle_get_children_simple(
+        &self,
+        header: RequestHeader,
+        buf: &mut &[u8],
+        session_id: SessionId,
+    ) -> ApplyResult {
         let Some(req) = GetChildrenRequest::from_bytes(buf) else {
             let tree = self.storage.read().await;
             let reply_header = ReplyHeader {
@@ -300,9 +379,19 @@ impl KeeperServer {
                 zxid: tree.last_zxid(),
                 err: ErrorCode::BadArguments,
             };
-            return reply_header.to_bytes();
+            return ApplyResult {
+                response: reply_header.to_bytes(),
+                watch_events: vec![],
+            };
         };
-        let tree = self.storage.read().await;
+
+        let mut tree = self.storage.write().await;
+
+        if req.watch {
+            tree.watch_state
+                .register(session_id, req.path.to_string(), WatchType::ListWatch);
+        }
+
         match tree.traverse(req.path) {
             Some(node) => {
                 let reply_header = ReplyHeader {
@@ -314,13 +403,16 @@ impl KeeperServer {
                 let mut children: Vec<&String> = node.children.iter().collect();
                 children.sort();
 
-                let mut payload = reply_header.to_bytes();
+                let mut response = reply_header.to_bytes();
 
                 let res = GetChildrenResponse {
                     children: &children,
                 };
-                payload.extend(res.to_bytes());
-                payload
+                response.extend(res.to_bytes());
+                ApplyResult {
+                    response,
+                    watch_events: vec![],
+                }
             }
             None => {
                 let reply_header = ReplyHeader {
@@ -328,7 +420,10 @@ impl KeeperServer {
                     zxid: tree.last_zxid(),
                     err: ErrorCode::NoNode,
                 };
-                reply_header.to_bytes()
+                ApplyResult {
+                    response: reply_header.to_bytes(),
+                    watch_events: vec![],
+                }
             }
         }
     }
@@ -337,7 +432,7 @@ impl KeeperServer {
         header: RequestHeader,
         buf: &mut &[u8],
         session_id: SessionId,
-    ) -> Vec<u8> {
+    ) -> ApplyResult {
         let Some(req) = CreateRequest::from_bytes(buf) else {
             println!("Failed to parse CreateRequest payload!");
             let tree = self.storage.read().await;
@@ -346,7 +441,10 @@ impl KeeperServer {
                 zxid: tree.last_zxid(),
                 err: ErrorCode::BadArguments,
             };
-            return reply_header.to_bytes();
+            return ApplyResult {
+                response: reply_header.to_bytes(),
+                watch_events: vec![],
+            };
         };
 
         let mut tree = self.storage.write().await;
@@ -357,7 +455,10 @@ impl KeeperServer {
                 zxid: tree.last_zxid(),
                 err: ErrorCode::NodeExists,
             };
-            return reply_header.to_bytes();
+            return ApplyResult {
+                response: reply_header.to_bytes(),
+                watch_events: vec![],
+            };
         }
 
         let (parent_path, child_name) = match req.path.rsplit_once("/") {
@@ -368,7 +469,10 @@ impl KeeperServer {
                     zxid: tree.last_zxid(),
                     err: ErrorCode::BadArguments,
                 };
-                return reply_header.to_bytes();
+                return ApplyResult {
+                    response: reply_header.to_bytes(),
+                    watch_events: vec![],
+                };
             }
         };
 
@@ -378,7 +482,10 @@ impl KeeperServer {
                 zxid: tree.last_zxid(),
                 err: ErrorCode::BadArguments,
             };
-            return reply_header.to_bytes();
+            return ApplyResult {
+                response: reply_header.to_bytes(),
+                watch_events: vec![],
+            };
         }
 
         let parent_path = if parent_path.is_empty() {
@@ -393,7 +500,10 @@ impl KeeperServer {
                 zxid: tree.last_zxid(),
                 err: ErrorCode::NoNode,
             };
-            return reply_header.to_bytes();
+            return ApplyResult {
+                response: reply_header.to_bytes(),
+                watch_events: vec![],
+            };
         }
 
         let now = SystemTime::now()
@@ -405,6 +515,8 @@ impl KeeperServer {
             path: req.path.to_string(),
             data: req.data.to_vec(),
             timestamp: now,
+            flags: req.flags,
+            session_id: session_id.0,
         };
         let payload = op.serialize();
 
@@ -417,26 +529,58 @@ impl KeeperServer {
             let reply_header = ReplyHeader {
                 xid: header.xid,
                 zxid: tree.last_zxid(),
-                err: ErrorCode::BadArguments,
+                err: ErrorCode::SystemError,
             };
-            return reply_header.to_bytes();
+            return ApplyResult {
+                response: reply_header.to_bytes(),
+                watch_events: vec![],
+            };
         }
         drop(wal);
 
-        let _ = tree.create(req.path, req.data.to_vec(), now, session_id, req.flags);
+        let created_path =
+            match tree.create(req.path, req.data.to_vec(), now, session_id, req.flags) {
+                Ok(p) => p,
+                Err(_) => {
+                    let reply_header = ReplyHeader {
+                        xid: header.xid,
+                        zxid: tree.last_zxid(),
+                        err: ErrorCode::BadArguments, // pick the right code per Err string later
+                    };
+                    return ApplyResult {
+                        response: reply_header.to_bytes(),
+                        watch_events: vec![],
+                    };
+                }
+            };
+
+        let watch_events = tree
+            .watch_state
+            .fire(&created_path, WatchEventType::Created);
 
         let reply_header = ReplyHeader {
             xid: header.xid,
             zxid: tree.last_zxid(),
             err: ErrorCode::Ok,
         };
-        let create_res = CreateResponse { path: req.path };
-        let mut response_payload = reply_header.to_bytes();
-        response_payload.extend(create_res.to_bytes());
-        response_payload
+        let create_res = CreateResponse {
+            path: &created_path,
+        };
+
+        let mut response = reply_header.to_bytes();
+        response.extend(create_res.to_bytes());
+        ApplyResult {
+            response,
+            watch_events,
+        }
     }
 
-    async fn handle_get(&self, header: RequestHeader, buf: &mut &[u8]) -> Vec<u8> {
+    async fn handle_get(
+        &self,
+        header: RequestHeader,
+        buf: &mut &[u8],
+        session_id: SessionId,
+    ) -> ApplyResult {
         let Some(req) = GetDataRequest::from_bytes(buf) else {
             let tree = self.storage.read().await;
             let reply_header = ReplyHeader {
@@ -444,10 +588,19 @@ impl KeeperServer {
                 zxid: tree.last_zxid(),
                 err: ErrorCode::BadArguments,
             };
-            return reply_header.to_bytes();
+            return ApplyResult {
+                response: reply_header.to_bytes(),
+                watch_events: vec![],
+            };
         };
 
-        let tree = self.storage.read().await;
+        let mut tree = self.storage.write().await;
+
+        if req.watch {
+            tree.watch_state
+                .register(session_id, req.path.to_string(), WatchType::Watch);
+        }
+
         match tree.traverse(req.path) {
             Some(node) => {
                 let reply_header = ReplyHeader {
@@ -459,9 +612,12 @@ impl KeeperServer {
                     data: &node.data,
                     stat: &node.stat,
                 };
-                let mut payload = reply_header.to_bytes();
-                payload.extend(get_res.to_bytes(node.children.len() as i32));
-                payload
+                let mut response = reply_header.to_bytes();
+                response.extend(get_res.to_bytes(node.children.len() as i32));
+                ApplyResult {
+                    response,
+                    watch_events: vec![],
+                }
             }
             None => {
                 let reply_header = ReplyHeader {
@@ -469,12 +625,20 @@ impl KeeperServer {
                     zxid: tree.last_zxid(),
                     err: ErrorCode::NoNode,
                 };
-                reply_header.to_bytes()
+                ApplyResult {
+                    response: reply_header.to_bytes(),
+                    watch_events: vec![],
+                }
             }
         }
     }
 
-    async fn handle_set(&self, header: RequestHeader, buf: &mut &[u8]) -> Vec<u8> {
+    async fn handle_set(
+        &self,
+        header: RequestHeader,
+        buf: &mut &[u8],
+        session_id: SessionId,
+    ) -> ApplyResult {
         let Some(req) = SetDataRequest::from_bytes(buf) else {
             let tree = self.storage.read().await;
             let reply_header = ReplyHeader {
@@ -482,11 +646,12 @@ impl KeeperServer {
                 zxid: tree.last_zxid(),
                 err: ErrorCode::BadArguments,
             };
-            return reply_header.to_bytes();
+            return ApplyResult {
+                response: reply_header.to_bytes(),
+                watch_events: vec![],
+            };
         };
 
-        // Brute Force: Get the tree lock early.
-        // TODO: In future, this should be pipelined
         let mut tree = self.storage.write().await;
 
         let current_version = match tree.traverse(req.path) {
@@ -497,7 +662,10 @@ impl KeeperServer {
                     zxid: tree.last_zxid(),
                     err: ErrorCode::NoNode,
                 };
-                return reply_header.to_bytes();
+                return ApplyResult {
+                    response: reply_header.to_bytes(),
+                    watch_events: vec![],
+                };
             }
         };
 
@@ -507,7 +675,10 @@ impl KeeperServer {
                 zxid: tree.last_zxid(),
                 err: ErrorCode::BadVersion,
             };
-            return reply_header.to_bytes();
+            return ApplyResult {
+                response: reply_header.to_bytes(),
+                watch_events: vec![],
+            };
         }
 
         let now = SystemTime::now()
@@ -531,13 +702,18 @@ impl KeeperServer {
             let reply_header = ReplyHeader {
                 xid: header.xid,
                 zxid: tree.last_zxid(),
-                err: ErrorCode::BadArguments,
+                err: ErrorCode::SystemError,
             };
-            return reply_header.to_bytes();
+            return ApplyResult {
+                response: reply_header.to_bytes(),
+                watch_events: vec![],
+            };
         }
         drop(wal);
 
         let _ = tree.set(req.path, req.data.to_vec(), now);
+
+        let watch_events = tree.watch_state.fire(req.path, WatchEventType::Changed);
 
         let node = tree.traverse(req.path).unwrap();
         let reply_header = ReplyHeader {
@@ -546,12 +722,20 @@ impl KeeperServer {
             err: ErrorCode::Ok,
         };
         let set_res = SetDataResponse { stat: &node.stat };
-        let mut payload = reply_header.to_bytes();
-        payload.extend(set_res.to_bytes(node.data.len() as i32, node.children.len() as i32));
-        payload
+        let mut response = reply_header.to_bytes();
+        response.extend(set_res.to_bytes(node.data.len() as i32, node.children.len() as i32));
+        ApplyResult {
+            response,
+            watch_events,
+        }
     }
 
-    async fn handle_delete(&self, header: RequestHeader, buf: &mut &[u8]) -> Vec<u8> {
+    async fn handle_delete(
+        &self,
+        header: RequestHeader,
+        buf: &mut &[u8],
+        session_id: SessionId,
+    ) -> ApplyResult {
         let Some(req) = DeleteRequest::from_bytes(buf) else {
             let tree = self.storage.read().await;
             let reply_header = ReplyHeader {
@@ -559,11 +743,12 @@ impl KeeperServer {
                 zxid: tree.last_zxid(),
                 err: ErrorCode::BadArguments,
             };
-            return reply_header.to_bytes();
+            return ApplyResult {
+                response: reply_header.to_bytes(),
+                watch_events: vec![],
+            };
         };
 
-        // Brute Force: Get the tree lock early.
-        // TODO: In future, this should be pipelined
         let mut tree = self.storage.write().await;
 
         let node = match tree.traverse(req.path) {
@@ -574,7 +759,10 @@ impl KeeperServer {
                     zxid: tree.last_zxid(),
                     err: ErrorCode::NoNode,
                 };
-                return reply_header.to_bytes();
+                return ApplyResult {
+                    response: reply_header.to_bytes(),
+                    watch_events: vec![],
+                };
             }
         };
 
@@ -584,7 +772,10 @@ impl KeeperServer {
                 zxid: tree.last_zxid(),
                 err: ErrorCode::BadVersion,
             };
-            return reply_header.to_bytes();
+            return ApplyResult {
+                response: reply_header.to_bytes(),
+                watch_events: vec![],
+            };
         }
 
         if !node.children.is_empty() {
@@ -593,7 +784,10 @@ impl KeeperServer {
                 zxid: tree.last_zxid(),
                 err: ErrorCode::NotEmpty,
             };
-            return reply_header.to_bytes();
+            return ApplyResult {
+                response: reply_header.to_bytes(),
+                watch_events: vec![],
+            };
         }
 
         let op = WalOperation::Delete {
@@ -610,9 +804,12 @@ impl KeeperServer {
             let reply_header = ReplyHeader {
                 xid: header.xid,
                 zxid: tree.last_zxid(),
-                err: ErrorCode::BadArguments,
+                err: ErrorCode::SystemError,
             };
-            return reply_header.to_bytes();
+            return ApplyResult {
+                response: reply_header.to_bytes(),
+                watch_events: vec![],
+            };
         }
         drop(wal);
 
@@ -622,13 +819,18 @@ impl KeeperServer {
             tree.session_state.remove_ephemeral(owner, req.path);
         }
 
+        let watch_events = tree.watch_state.fire(req.path, WatchEventType::Deleted);
+
         let reply_header = ReplyHeader {
             xid: header.xid,
             zxid: tree.last_zxid(),
             err: ErrorCode::Ok,
         };
-        let mut payload = reply_header.to_bytes();
-        payload.extend(EmptyResponse.to_bytes());
-        payload
+        let mut response = reply_header.to_bytes();
+        response.extend(EmptyResponse.to_bytes());
+        ApplyResult {
+            response,
+            watch_events,
+        }
     }
 }

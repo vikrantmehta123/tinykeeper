@@ -32,7 +32,6 @@ from markers import SESSIONS, WATCHES, todo
 class TestDataWatches:
     """Set with `get`. Fires on a change to this node's data, or its death."""
 
-    @todo(WATCHES)
     def test_fires_on_set(self, zk, zk2):
         zk.create("/watched", b"v0")
 
@@ -45,7 +44,6 @@ class TestDataWatches:
         assert watch.last.type == "CHANGED"
         assert watch.last.path == "/watched"
 
-    @todo(WATCHES)
     def test_fires_on_delete(self, zk, zk2):
         zk.create("/watch_del", b"data")
 
@@ -58,7 +56,6 @@ class TestDataWatches:
         assert watch.last.type == "DELETED"
         assert watch.last.path == "/watch_del"
 
-    @todo(WATCHES)
     def test_does_not_fire_when_a_child_appears(self, zk, zk2):
         """A data watch is not a child watch. Waking a client for changes it
         did not ask about is as wrong as not waking it at all."""
@@ -71,7 +68,6 @@ class TestDataWatches:
 
         watch.assert_silent()
 
-    @todo(WATCHES)
     def test_the_notification_carries_no_data(self, zk, zk2):
         """The client is told the path changed and must re-read it. This is
         why a watch can never deliver a stale value."""
@@ -91,7 +87,6 @@ class TestExistsWatches:
     """Set with `exists`. The only watch you can set on a node that is not
     there yet — which is how a client waits for something to appear."""
 
-    @todo(WATCHES)
     def test_fires_on_create(self, zk, zk2):
         watch = WatchRecorder()
         assert zk.exists("/will_appear", watch=watch) is None
@@ -102,7 +97,6 @@ class TestExistsWatches:
         assert watch.last.type == "CREATED"
         assert watch.last.path == "/will_appear"
 
-    @todo(WATCHES)
     def test_fires_on_set(self, zk, zk2):
         zk.create("/exists_set", b"v0")
 
@@ -114,7 +108,6 @@ class TestExistsWatches:
         assert watch.wait()
         assert watch.last.type == "CHANGED"
 
-    @todo(WATCHES)
     def test_fires_on_delete(self, zk, zk2):
         zk.create("/exists_del", b"v0")
 
@@ -131,7 +124,6 @@ class TestChildWatches:
     """Set with `getChildren`. Fires when the child list changes — not when
     the children's contents do."""
 
-    @todo(WATCHES)
     def test_fires_when_a_child_is_created(self, zk, zk2):
         zk.create("/watch_parent", b"")
 
@@ -144,7 +136,6 @@ class TestChildWatches:
         assert watch.last.type == "CHILD"
         assert watch.last.path == "/watch_parent"
 
-    @todo(WATCHES)
     def test_fires_when_a_child_is_deleted(self, zk, zk2):
         zk.create("/watch_shrink", b"")
         zk.create("/watch_shrink/child", b"")
@@ -157,7 +148,6 @@ class TestChildWatches:
         assert watch.wait()
         assert watch.last.type == "CHILD"
 
-    @todo(WATCHES)
     def test_does_not_fire_when_a_childs_data_changes(self, zk, zk2):
         zk.create("/membership", b"")
         zk.create("/membership/child", b"v0")
@@ -185,7 +175,6 @@ class TestChildWatches:
 
 
 class TestOneShot:
-    @todo(WATCHES)
     def test_a_watch_fires_only_once(self, zk, zk2):
         zk.create("/once", b"v0")
 
@@ -201,7 +190,6 @@ class TestOneShot:
 
         assert watch.count == 1, f"watch fired {watch.count} times"
 
-    @todo(WATCHES)
     def test_a_client_can_re_arm_the_watch(self, zk, zk2):
         """The normal loop: get with a watch, get told, re-read with a new
         watch. Nothing is missed as long as the client re-reads."""
@@ -222,7 +210,6 @@ class TestOneShot:
 
 
 class TestDelivery:
-    @todo(WATCHES)
     def test_a_client_is_notified_of_its_own_write(self, zk):
         """No special case for the writer. A client that both watches and
         writes hears about its own change."""
@@ -235,7 +222,6 @@ class TestDelivery:
         assert watch.wait()
         assert watch.last.type == "CHANGED"
 
-    @todo(WATCHES)
     def test_every_watcher_of_a_node_is_notified(self, keeper):
         watchers = [keeper.client() for _ in range(3)]
         writer = keeper.client()
@@ -253,7 +239,6 @@ class TestDelivery:
         for index, recorder in enumerate(recorders):
             assert recorder.wait(), f"watcher {index} was not notified"
 
-    @todo(WATCHES)
     def test_a_watch_is_delivered_only_to_the_session_that_set_it(self, zk, zk2):
         zk.create("/private", b"v0")
 
@@ -268,7 +253,6 @@ class TestDelivery:
         assert mine.wait()
         assert theirs.count == 0
 
-    @todo(WATCHES)
     def test_watches_on_different_paths_do_not_cross(self, zk, zk2):
         zk.create("/path_a", b"v0")
         zk.create("/path_b", b"v0")
@@ -286,7 +270,6 @@ class TestDelivery:
 
 
 class TestWatchesAcrossReconnects:
-    @todo(SESSIONS)
     def test_a_watch_survives_a_broken_connection(self, keeper, zk2):
         """Watches live on the server, keyed by session — but the server
         forgets them when the connection drops. On reconnect the client

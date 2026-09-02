@@ -8,6 +8,7 @@ mod protocol;
 mod server_uuid;
 mod session_expiry_queue;
 mod storage;
+mod watch_state;
 mod znode;
 
 use std::sync::{Arc, OnceLock};

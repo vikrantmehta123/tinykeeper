@@ -23,7 +23,7 @@ These tests need to control the process, so they are skipped under --zk-host.
 import pytest
 
 from helpers import wait_until
-from markers import EPHEMERAL, PERSISTENCE, SEQUENTIAL, ZXIDS, needs_restart, todo
+from markers import EPHEMERAL, PERSISTENCE, ZXIDS, needs_restart, todo
 
 pytestmark = needs_restart
 
@@ -180,7 +180,6 @@ class TestMetadataSurvives:
         client.create("/zxid_after", b"")
         assert client.exists("/zxid_after").czxid > before.czxid
 
-    @todo(SEQUENTIAL)
     def test_the_sequential_counter_survives_a_crash(self, keeper):
         client = keeper.client()
         client.create("/seq_crash", b"")

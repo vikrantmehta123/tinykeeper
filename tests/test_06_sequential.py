@@ -20,7 +20,6 @@ from markers import EPHEMERAL, SEQUENTIAL, needs_restart, todo
 
 
 class TestSequentialNaming:
-    @todo(SEQUENTIAL)
     def test_the_suffix_is_ten_padded_digits(self, zk):
         zk.create("/seq", b"")
         path = zk.create("/seq/item-", b"first", sequence=True)
@@ -30,7 +29,6 @@ class TestSequentialNaming:
         assert len(suffix) == 10
         assert suffix.isdigit()
 
-    @todo(SEQUENTIAL)
     def test_the_first_child_is_zero(self, zk):
         zk.create("/seq_zero", b"")
         path = zk.create("/seq_zero/n-", b"", sequence=True)
@@ -46,7 +44,6 @@ class TestSequentialNaming:
         assert data == b"payload"
         assert path.rsplit("/", 1)[1] in zk.get_children("/seq_real", include_data=True)[0]
 
-    @todo(SEQUENTIAL)
     def test_the_counter_increases(self, zk):
         zk.create("/seq_inc", b"")
         numbers = [
@@ -56,7 +53,6 @@ class TestSequentialNaming:
         assert numbers == sorted(numbers)
         assert len(set(numbers)) == 5
 
-    @todo(SEQUENTIAL)
     def test_lexical_order_matches_creation_order(self, zk):
         """This is the whole point of the padding: `sorted(children)` is the
         queue, with no parsing."""
@@ -66,7 +62,6 @@ class TestSequentialNaming:
         children, _stat = zk.get_children("/seq_order", include_data=True)
         assert sorted(children) == [path.rsplit("/", 1)[1] for path in created]
 
-    @todo(SEQUENTIAL)
     def test_each_parent_has_its_own_counter(self, zk):
         zk.create("/seq_a", b"")
         zk.create("/seq_b", b"")
@@ -87,7 +82,6 @@ class TestSequentialNaming:
 class TestCounterDurability:
     """The counter must never hand out a name twice."""
 
-    @todo(SEQUENTIAL)
     def test_deleting_children_does_not_reset_the_counter(self, zk):
         zk.create("/seq_reuse", b"")
         first_batch = [zk.create("/seq_reuse/n-", b"", sequence=True) for _ in range(3)]
@@ -101,7 +95,6 @@ class TestCounterDurability:
         assert int(after.rsplit("-", 1)[1]) > highest
 
     @needs_restart
-    @todo(SEQUENTIAL)
     def test_the_counter_survives_a_restart(self, keeper):
         client = keeper.client()
         client.create("/seq_persist", b"")

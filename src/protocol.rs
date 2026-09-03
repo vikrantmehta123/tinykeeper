@@ -64,7 +64,7 @@ impl TryFrom<i32> for OpCode {
 pub enum ErrorCode {
     Ok = 0,
     SystemError = -1,
-    RuntimeInconsistency =  -2,
+    RuntimeInconsistency = -2,
     BadArguments = -8,
     NoNode = -101,
     BadVersion = -103,
@@ -448,9 +448,9 @@ impl<'a> WatchNotification<'a> {
 /// `multi` opcode has several sub-ops.
 /// Each of those sub-ops has a separate header
 pub struct MultiHeader {
-    op_type: i32, // what's the opcode of this sub-op 
-    done: bool, // if true, no more ops after this. 
-    err: i32, // -1 in requests; carries an error code in responses
+    op_type: i32, // what's the opcode of this sub-op
+    done: bool,   // if true, no more ops after this.
+    err: i32,     // -1 in requests; carries an error code in responses
 }
 
 impl MultiHeader {
@@ -467,8 +467,8 @@ impl MultiHeader {
             return None;
         }
 
-        let op_type = cursor.get_i32(); 
-        
+        let op_type = cursor.get_i32();
+
         let done = match cursor.get_u8() {
             0 => false,
             1 => true,
@@ -512,7 +512,7 @@ impl<'a> CheckRequest<'a> {
         if cursor.len() < path_len + 4 {
             return None;
         }
-        
+
         let (path_bytes, remaining) = cursor.split_at(path_len);
         let path = std::str::from_utf8(path_bytes).ok()?;
         cursor = remaining;
@@ -540,7 +540,7 @@ impl<'a> MultiOp<'a> {
             5 => Some(MultiOp::Set(SetDataRequest::from_bytes(buf)?)),
             2 => Some(MultiOp::Delete(DeleteRequest::from_bytes(buf)?)),
             13 => Some(MultiOp::Check(CheckRequest::from_bytes(buf)?)),
-            _ => None
+            _ => None,
         }
     }
 }
@@ -557,7 +557,7 @@ impl<'a> MultiRequest<'a> {
 
         loop {
             let header = MultiHeader::from_bytes(&mut cursor)?;
-            
+
             if header.done {
                 // A multi request ends with the sentinel header (-1, true, -1).
                 if header.op_type != -1 || header.err != -1 {
@@ -579,7 +579,6 @@ impl<'a> MultiRequest<'a> {
     }
 }
 
-
 /// Owned result of one operation inside a `multi` response.
 ///
 /// Error(Ok) represents an operation that was valid but rolled back because
@@ -590,10 +589,10 @@ pub enum MultiOpResponse {
         path: String,
     },
     Set {
-        stat: Stat, 
-        data_length: i32, 
+        stat: Stat,
+        data_length: i32,
         num_children: i32,
-    }, 
+    },
     Delete,
     Check,
 
@@ -652,7 +651,7 @@ impl MultiOpResponse {
                 header.encode_into(buf);
             }
 
-            // For Error(ErrorCode::Ok), this writes zero in both the 
+            // For Error(ErrorCode::Ok), this writes zero in both the
             // header and body, which Kazoo interprets as a rolled-back operation.
             Self::Error(code) => {
                 let error = *code as i32;

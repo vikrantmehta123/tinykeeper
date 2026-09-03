@@ -64,6 +64,7 @@ impl TryFrom<i32> for OpCode {
 pub enum ErrorCode {
     Ok = 0,
     SystemError = -1,
+    RuntimeInconsistency =  -2,
     BadArguments = -8,
     NoNode = -101,
     BadVersion = -103,
@@ -440,6 +441,260 @@ impl<'a> WatchNotification<'a> {
         let path_len = self.path.len() as i32;
         buf.extend_from_slice(&path_len.to_be_bytes());
         buf.extend_from_slice(self.path.as_bytes());
+        buf
+    }
+}
+
+/// `multi` opcode has several sub-ops.
+/// Each of those sub-ops has a separate header
+pub struct MultiHeader {
+    op_type: i32, // what's the opcode of this sub-op 
+    done: bool, // if true, no more ops after this. 
+    err: i32, // -1 in requests; carries an error code in responses
+}
+
+impl MultiHeader {
+    const SIZE: usize = 4 + 1 + 4;
+
+    /// Decodes one nine-byte multi header.
+    ///
+    /// Returns `None` if the header is truncated or contains an invalid
+    /// boolean encoding. The input buffer is unchanged on failure.
+    pub fn from_bytes(buf: &mut &[u8]) -> Option<Self> {
+        let mut cursor = *buf;
+
+        if cursor.len() < Self::SIZE {
+            return None;
+        }
+
+        let op_type = cursor.get_i32(); 
+        
+        let done = match cursor.get_u8() {
+            0 => false,
+            1 => true,
+            _ => return None,
+        };
+
+        let err = cursor.get_i32();
+
+        // Advance buffer only if the parsing succeeds
+        *buf = cursor;
+
+        Some(MultiHeader { op_type, done, err })
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(Self::SIZE);
+        self.encode_into(&mut buf);
+        buf
+    }
+
+    fn encode_into(&self, buf: &mut Vec<u8>) {
+        buf.extend_from_slice(&self.op_type.to_be_bytes());
+        buf.push(u8::from(self.done));
+        buf.extend_from_slice(&self.err.to_be_bytes());
+    }
+}
+
+pub struct CheckRequest<'a> {
+    pub path: &'a str,
+    pub version: i32,
+}
+
+impl<'a> CheckRequest<'a> {
+    pub fn from_bytes(buf: &mut &'a [u8]) -> Option<Self> {
+        let mut cursor = *buf;
+        if cursor.len() < 4 {
+            return None;
+        }
+
+        let path_len = usize::try_from(cursor.get_i32()).ok()?;
+        if cursor.len() < path_len + 4 {
+            return None;
+        }
+        
+        let (path_bytes, remaining) = cursor.split_at(path_len);
+        let path = std::str::from_utf8(path_bytes).ok()?;
+        cursor = remaining;
+
+        let version = cursor.get_i32();
+
+        // Move forward the buffer only when request is successfully parsed
+        *buf = cursor;
+
+        Some(Self { path, version })
+    }
+}
+
+pub enum MultiOp<'a> {
+    Create(CreateRequest<'a>),
+    Set(SetDataRequest<'a>),
+    Delete(DeleteRequest<'a>),
+    Check(CheckRequest<'a>),
+}
+
+impl<'a> MultiOp<'a> {
+    pub fn from_bytes(op_type: i32, buf: &mut &'a [u8]) -> Option<Self> {
+        match op_type {
+            1 => Some(MultiOp::Create(CreateRequest::from_bytes(buf)?)),
+            5 => Some(MultiOp::Set(SetDataRequest::from_bytes(buf)?)),
+            2 => Some(MultiOp::Delete(DeleteRequest::from_bytes(buf)?)),
+            13 => Some(MultiOp::Check(CheckRequest::from_bytes(buf)?)),
+            _ => None
+        }
+    }
+}
+
+pub struct MultiRequest<'a> {
+    pub ops: Vec<MultiOp<'a>>,
+}
+
+impl<'a> MultiRequest<'a> {
+    pub fn from_bytes(buf: &mut &'a [u8]) -> Option<Self> {
+        let mut cursor = *buf;
+
+        let mut ops = Vec::new();
+
+        loop {
+            let header = MultiHeader::from_bytes(&mut cursor)?;
+            
+            if header.done {
+                // A multi request ends with the sentinel header (-1, true, -1).
+                if header.op_type != -1 || header.err != -1 {
+                    return None;
+                }
+                break;
+            }
+
+            // `err` is unused in request-side operation headers.
+            if header.err != -1 {
+                return None;
+            }
+
+            let op = MultiOp::from_bytes(header.op_type, &mut cursor)?;
+            ops.push(op);
+        }
+        *buf = cursor;
+        Some(MultiRequest { ops })
+    }
+}
+
+
+/// Owned result of one operation inside a `multi` response.
+///
+/// Error(Ok) represents an operation that was valid but rolled back because
+/// another operation in the transaction failed.
+#[derive(Debug, Clone, PartialEq)]
+pub enum MultiOpResponse {
+    Create {
+        path: String,
+    },
+    Set {
+        stat: Stat, 
+        data_length: i32, 
+        num_children: i32,
+    }, 
+    Delete,
+    Check,
+
+    Error(ErrorCode),
+}
+
+impl MultiOpResponse {
+    /// serializes one MultiOpResponse directly into a buffer owned by MultiResponse
+    pub fn encode_into(&self, buf: &mut Vec<u8>) {
+        match self {
+            Self::Create { path } => {
+                let header = MultiHeader {
+                    op_type: OpCode::Create as i32,
+                    done: false,
+                    err: ErrorCode::Ok as i32,
+                };
+
+                header.encode_into(buf);
+
+                let path_len = path.len() as i32;
+                buf.extend_from_slice(&path_len.to_be_bytes());
+                buf.extend_from_slice(path.as_bytes());
+            }
+            Self::Set {
+                stat,
+                data_length,
+                num_children,
+            } => {
+                let header = MultiHeader {
+                    op_type: OpCode::Set as i32,
+                    done: false,
+                    err: ErrorCode::Ok as i32,
+                };
+
+                header.encode_into(buf);
+                buf.extend(stat.to_bytes(*data_length, *num_children));
+            }
+
+            Self::Delete => {
+                let header = MultiHeader {
+                    op_type: OpCode::Remove as i32,
+                    done: false,
+                    err: ErrorCode::Ok as i32,
+                };
+
+                header.encode_into(buf);
+            }
+
+            Self::Check => {
+                let header = MultiHeader {
+                    op_type: OpCode::Check as i32,
+                    done: false,
+                    err: ErrorCode::Ok as i32,
+                };
+
+                header.encode_into(buf);
+            }
+
+            // For Error(ErrorCode::Ok), this writes zero in both the 
+            // header and body, which Kazoo interprets as a rolled-back operation.
+            Self::Error(code) => {
+                let error = *code as i32;
+
+                let header = MultiHeader {
+                    op_type: -1,
+                    done: false,
+                    err: error,
+                };
+
+                header.encode_into(buf);
+
+                // Error responses repeat the error code in their body.
+                buf.extend_from_slice(&error.to_be_bytes());
+            }
+        }
+    }
+}
+
+/// Response body for a multi request.
+///
+/// Entries correspond one-for-one, and in order, with the request operations.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MultiResponse {
+    pub responses: Vec<MultiOpResponse>,
+}
+
+impl MultiResponse {
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut buf = Vec::new();
+
+        for response in &self.responses {
+            response.encode_into(&mut buf);
+        }
+
+        let footer = MultiHeader {
+            op_type: -1,
+            done: true,
+            err: -1,
+        };
+
+        footer.encode_into(&mut buf);
         buf
     }
 }

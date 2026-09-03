@@ -213,3 +213,21 @@ The counter reflects all the child creations- not just the sequential ones. This
 produces collisions. Otherwise, you need some other mechanism to ensure that there is never a collision between names of sequential and
 non-sequential nodes.
 
+## Multi
+
+ZooKeeper gives you basic operations: create, delete, setData, check. Each one is atomic. 
+But in real systems often need several operations to happen together.
+
+That's why ZooKeeper offers a `multi` primitive. This accepts a list of operations and ZooKeeper guarantees atomicity and isolation.
+
+That implies:
+* Every operation in the list either succeeds or none succeed.
+* The whole batch is applied as a single atomic unit in global order. No other client sees an intermediate state, and no other operation interleaves inside your batch.
+
+Only four operations are allowed in the `multi` operations list:
+
+* Create: There are multiple create operations allowed in zookeeper: Create2, CreateTTL, Create, and createContainer. All are allowed.
+* setData
+* delete
+* check: "make sure this node is still at version X". This changes nothing.
+

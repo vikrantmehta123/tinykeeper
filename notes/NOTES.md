@@ -16,6 +16,47 @@ ClickHouse Keeper is a separate system (even if it runs inside the same process)
 
 To guarantee this strong consistency, the Keeper nodes use an algorithm (like Raft). This algorithm dictates that all write operations (creating a node, updating data) must be routed through a single, elected Keeper Leader. The Keeper Leader decides the exact strict order of operations and ensures all other Keeper nodes apply them in that exact same order.
 
+## Concurrency in Keeper
+
+Let's assume a setup where we have three keeper nodes. And we will assume something like NuRaft or openraft that handles the Raft consensus for us. This is from a ClickHouse and C++ point of view. In Rust, this discussion can be slightly different.
+
+* Each keeper node has its own Raft log, which is stored on disk like a WAL. So each node can have its own disk for the log. 
+* The in-memory keeper tree is the "result" of applying that log.
+* Raft guarantees that the on disk WAL will be correct. We have to guarantee that the result state is correct.
+
+How does ClickHouse maintain the tree and provide the guarantee that there is no data race?
+* Keeper is a leader-follower setup. So there is only one node that accepts writes in Keeper. In ClickHouse, if the clients connect to a follower, the write is rejected and the client has to try connecting to a different node i.e. the leader node.
+* Now, multiple clients can concurrently send writes to the leader as well! So ClickHouse has a queue where the clients put their write requests. This is non-deterministic. We cannot guarantee which thread will put their request first and we are okay with this.
+* There is another thread that is pulling these write requests from the queue and sending it to NuRaft to append to log. Note that this is a single threaded operation! A single thread calls NuRaft with a write request and then NuRaft takes over.
+* NuRaft then does its thing, writes the "request" to the Raft log on its disk. This happens on the leader node only!
+* Then the leader node calls `pre_commit()` and then the log entry is sent to the follower nodes to apply to their records.
+* The `pre_commit()` method takes an exclusive lock on the `delta` linked list. In this, the node records the deltas for that zxid in one order. Again this is single-threaded and under a lock. This record is not yet applied to the keeper tree. The deltas are like a staging area.
+* When the leader node's NuRaft gets back acknowledgements from majority of the nodes, then it calls `commit()`. This method takes an exclusive lock on the actual keeper tree and applies the deltas one by one for that zxid. Again this is single threaded!
+* So, by design, the write-write conflicts are entirely eliminated. 
+* Only read-write conflicts are possible but they are also eliminated by taking the locks.
+* Note that while committing, we need only a Read lock on the `delta` list.
+
+Thanks to Rust, this whole class of problems itself goes away! We can be quite relaxed and think that this issue won't be there in our Rust implementation. We can simply use the RwLock and we're sorted. There is a very nice Claude session where I explored this more.
+
+Refer to this session: `claude --resume "ClickHouse Keeper Concurrency"`
+
+#### TODO Section
+
+Let's think about how this might be implemented in Rust:
+1. We have tokio running asynchronous tasks. Tokio receives incoming client requests.
+2. We first parse the incoming request based on the opcode.
+3. Then we match the opcode to the appropriate handler.
+4. If the request is valid, then we call openraft in between. TODO: Need to check whether the validation happens before openraft or after.
+5. Each handler is an async function, which gets registered as a task with our tokio runtime.
+6. Each handler has to get either a read or a write lock on the keeper tree. Since we let tokio control all the thread spawning and execution in tinykeeper, we don't control the fact that there will be a dedicated thread handling write requests.
+7. So we rely on the RwLock on the keeper tree to prevent the data races.
+8. TODO: In Rust design, we need to check what happens when a write task is picked up by another thread. That is, we need to check whether we implement `Send` for our handler.
+9. TODO: For the moment, we are not having a delta mechanism. We are simply cloning the tree. I think we can rely on openraft to send sequential requests and not concurrent write requests. So we will only have one clone of the tree. But still we need to check how the locking mechanism will work in this cloned tree.
+10. All this is to support the `multi` opcode. A cloned copy acts as a proxy for the deltas and can be used to simulate a transaction.
+11. In v2, we need to add support for deltas. That's for sure.
+
+---
+
 ## ZNodes
 
 At its core, ClickHouse Keeper (which is a drop-in replacement for ZooKeeper) is a coordination service for distributed systems.
@@ -231,3 +272,4 @@ Only four operations are allowed in the `multi` operations list:
 * delete
 * check: "make sure this node is still at version X". This changes nothing.
 
+A WatchEvent can also be registered nodes being changed in the `multi`. Let's say four nodes are already being watched and then `multi` changes those nodes. The watch events should be emitted only if the `multi` commits.

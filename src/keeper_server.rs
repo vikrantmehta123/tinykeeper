@@ -9,6 +9,22 @@ use std::path::Path;
 use std::time::SystemTime;
 
 #[derive(Serialize, Deserialize)]
+enum MultiWalOperation {
+    Create {
+        path: String,
+        data: Vec<u8>,
+        flags: i32,
+    },
+    Set {
+        path: String,
+        data: Vec<u8>,
+    },
+    Delete {
+        path: String,
+    },
+}
+
+#[derive(Serialize, Deserialize)]
 enum WalOperation {
     Create {
         path: String,
@@ -31,6 +47,11 @@ enum WalOperation {
         timeout_ms: i64,
     },
     CloseSession {
+        session_id: i64,
+    },
+    Multi {
+        operations: Vec<MultiWalOperation>,
+        timestamp: i64,
         session_id: i64,
     },
 }
@@ -99,6 +120,41 @@ impl KeeperServer {
                         storage
                             .delete(path)
                             .expect("WAL replay of CloseSession cleanup failed");
+                    }
+                }
+                WalOperation::Multi {
+                    operations,
+                    timestamp,
+                    session_id,
+                } => {
+                    for operation in operations {
+                        match operation {
+                            MultiWalOperation::Create { path, data, flags } => {
+                                storage
+                                    .create(&path, data, timestamp, SessionId(session_id), flags)
+                                    .expect("WAL replay of Multi Create failed");
+                            }
+                            MultiWalOperation::Set { path, data } => {
+                                storage
+                                    .set(&path, data, timestamp)
+                                    .expect("WAL replay of Multi Set failed");
+                            }
+                            MultiWalOperation::Delete { path } => {
+                                let owner = storage
+                                    .traverse(&path)
+                                    .expect("WAL replay of Multi Delete: node missing")
+                                    .stat
+                                    .ephemeral_owner;
+
+                                storage
+                                    .delete(&path)
+                                    .expect("WAL replay of Multi Delete failed");
+
+                                if owner != SessionId(0) {
+                                    storage.session_state.remove_ephemeral(owner, &path);
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -270,10 +326,184 @@ impl KeeperServer {
         let mut tree = self.storage.write().await;
         let mut staged = tree.clone();
 
-        let zxid = staged.next_zxid();
-        
+        let timestamp = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock is before Unix epoch")
+            .as_millis() as i64;
 
-        todo!()
+        let zxid = staged.next_zxid();
+        let op_count = req.ops.len();
+        let mut responses = Vec::with_capacity(op_count);
+        let mut wal_operations = Vec::with_capacity(op_count);
+        let mut watch_events = Vec::new();
+        for op in req.ops {
+            let result = match op {
+                MultiOp::Check(req) => match staged.traverse(req.path) {
+                    None => Err(ErrorCode::NoNode),
+                    Some(node) => {
+                        if req.version != -1 && req.version != node.stat.version {
+                            Err(ErrorCode::BadVersion)
+                        } else {
+                            Ok(MultiOpResponse::Check)
+                        }
+                    }
+                },
+                MultiOp::Set(req) => match staged.traverse(req.path) {
+                    None => Err(ErrorCode::NoNode),
+                    Some(node) => {
+                        if req.version != -1 && req.version != node.stat.version {
+                            Err(ErrorCode::BadVersion)
+                        } else {
+                            staged
+                                .set(req.path, req.data.to_vec(), timestamp)
+                                .expect("node was validated to exist");
+
+                            watch_events
+                                .extend(staged.watch_state.fire(req.path, WatchEventType::Changed));
+                            wal_operations.push(MultiWalOperation::Set {
+                                path: req.path.to_string(),
+                                data: req.data.to_vec(),
+                            });
+
+                            let updated = staged
+                                .traverse(req.path)
+                                .expect("Set does not remove the node");
+
+                            Ok(MultiOpResponse::Set {
+                                stat: updated.stat,
+                                data_length: updated.data.len() as i32,
+                                num_children: updated.children.len() as i32,
+                            })
+                        }
+                    }
+                },
+                MultiOp::Create(req) => {
+                    match staged.create(
+                        req.path,
+                        req.data.to_vec(),
+                        timestamp,
+                        session_id,
+                        req.flags,
+                    ) {
+                        Ok(path) => {
+                            watch_events
+                                .extend(staged.watch_state.fire(&path, WatchEventType::Created));
+                            wal_operations.push(MultiWalOperation::Create {
+                                path: req.path.to_string(), // Original path, before sequential suffix.
+                                data: req.data.to_vec(),
+                                flags: req.flags,
+                            });
+
+                            Ok(MultiOpResponse::Create { path })
+                        }
+                        Err(error) => Err(match error {
+                            "Parent node does not exist" => ErrorCode::NoNode,
+                            "Node already exists" => ErrorCode::NodeExists,
+                            "Cannot create child under ephemeral node" => {
+                                ErrorCode::NoChildrenForEphemerals
+                            }
+                            "Invalid path format" | "Cannot create root node" => {
+                                ErrorCode::BadArguments
+                            }
+                            _ => ErrorCode::SystemError,
+                        }),
+                    }
+                }
+                MultiOp::Delete(req) => match staged.traverse(req.path) {
+                    None => Err(ErrorCode::NoNode),
+                    Some(node) => {
+                        if req.version != -1 && req.version != node.stat.version {
+                            Err(ErrorCode::BadVersion)
+                        } else if req.path == "/" {
+                            Err(ErrorCode::BadArguments)
+                        } else if !node.children.is_empty() {
+                            Err(ErrorCode::NotEmpty)
+                        } else {
+                            let owner = node.stat.ephemeral_owner;
+
+                            staged
+                                .delete(req.path)
+                                .expect("delete conditions were validated");
+
+                            if owner != SessionId(0) {
+                                staged.session_state.remove_ephemeral(owner, req.path);
+                            }
+
+                            watch_events
+                                .extend(staged.watch_state.fire(req.path, WatchEventType::Deleted));
+                            wal_operations.push(MultiWalOperation::Delete {
+                                path: req.path.to_string(),
+                            });
+
+                            Ok(MultiOpResponse::Delete)
+                        }
+                    }
+                },
+            };
+
+            match result {
+                Ok(response) => responses.push(response),
+                Err(error) => {
+                    // Earlier operations succeeded on staged, but are now rolled back.
+                    // Overwriting earlier pushed responses.
+                    responses.fill(MultiOpResponse::Error(ErrorCode::Ok));
+
+                    // The operation that failed.
+                    responses.push(MultiOpResponse::Error(error));
+
+                    // Remaining operations were never executed.
+                    responses.resize(
+                        op_count,
+                        MultiOpResponse::Error(ErrorCode::RuntimeInconsistency),
+                    );
+
+                    let reply_header = ReplyHeader {
+                        xid: header.xid,
+                        zxid: tree.last_zxid(),
+                        err: ErrorCode::Ok,
+                    };
+
+                    let mut response = reply_header.to_bytes();
+                    response.extend(MultiResponse { responses }.to_bytes());
+
+                    return ApplyResult {
+                        response,
+                        watch_events: vec![],
+                    };
+                }
+            }
+        }
+
+        // `multi` was successful. Write WAL, swap tree and staged, and return response
+        let operation = WalOperation::Multi {
+            operations: wal_operations,
+            timestamp,
+            session_id: session_id.0,
+        };
+        let payload = operation.serialize();
+        let mut wal = self.wal.lock().await;
+        wal.append(1, zxid as u64, 0, 0, &payload);
+
+        if let Err(error) = wal.flush().await {
+            todo!("Handle uncertain WAL persistence or rotation failure: {error}");
+        }
+
+        *tree = staged;
+        drop(wal);
+
+        let reply_header = ReplyHeader {
+            xid: header.xid,
+            zxid,
+            err: ErrorCode::Ok,
+        };
+
+        let mut response = reply_header.to_bytes();
+        response.extend(MultiResponse { responses }.to_bytes());
+
+        ApplyResult {
+            response,
+            watch_events,
+        }
     }
     async fn handle_exists(
         &self,

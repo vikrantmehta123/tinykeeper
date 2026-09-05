@@ -68,8 +68,9 @@ pub enum ErrorCode {
     BadArguments = -8,
     NoNode = -101,
     BadVersion = -103,
-    NotEmpty = -111,
+    NoChildrenForEphemerals = -108,
     NodeExists = -110,
+    NotEmpty = -111,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]

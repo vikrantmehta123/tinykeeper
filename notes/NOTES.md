@@ -36,7 +36,7 @@ How does ClickHouse maintain the tree and provide the guarantee that there is no
 * Only read-write conflicts are possible but they are also eliminated by taking the locks.
 * Note that while committing, we need only a Read lock on the `delta` list.
 
-Thanks to Rust, this whole class of problems itself goes away! We can be quite relaxed and think that this issue won't be there in our Rust implementation. We can simply use the RwLock and we're sorted. There is a very nice Claude session where I explored this more.
+Thanks to Rust, this whole class of problems itself goes away! We can be quite relaxed and think that this issue won't be there in our Rust implementation. We just have to ensure transaction correctness. We can simply use the RwLock and we're sorted. There is a very nice Claude session where I explored this more.
 
 Refer to this session: `claude --resume "ClickHouse Keeper Concurrency"`
 

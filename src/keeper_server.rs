@@ -230,6 +230,7 @@ impl KeeperServer {
                     watch_events: vec![],
                 }
             }
+            OpCode::Multi => self.handle_multi(header, &mut buf, session_id).await,
             _ => {
                 println!("Received unimplemented OpCode: {:?}", header.opcode);
                 let tree = self.storage.read().await;
@@ -244,6 +245,35 @@ impl KeeperServer {
                 }
             }
         }
+    }
+
+    async fn handle_multi(
+        &self,
+        header: RequestHeader,
+        buf: &mut &[u8],
+        session_id: SessionId,
+    ) -> ApplyResult {
+        let Some(req) = MultiRequest::from_bytes(buf) else {
+            let tree = self.storage.read().await;
+
+            let reply_header = ReplyHeader {
+                xid: header.xid,
+                zxid: tree.last_zxid(),
+                err: ErrorCode::BadArguments,
+            };
+            return ApplyResult {
+                response: reply_header.to_bytes(),
+                watch_events: vec![],
+            };
+        };
+
+        let mut tree = self.storage.write().await;
+        let mut staged = tree.clone();
+
+        let zxid = staged.next_zxid();
+        
+
+        todo!()
     }
     async fn handle_exists(
         &self,

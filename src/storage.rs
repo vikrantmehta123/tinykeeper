@@ -16,6 +16,7 @@ use std::collections::{HashMap, HashSet};
 /// 2. Which ephemeral paths does each session own? →
 /// 3. What's the next session ID to hand out?
 /// 4. When does each session expire?
+#[derive(Clone)]
 pub struct SessionState {
     session_and_timeout: HashMap<SessionId, i64>,
     ephemerals: HashMap<SessionId, HashSet<String>>,
@@ -103,6 +104,7 @@ impl SessionState {
     }
 }
 
+#[derive(Clone)]
 pub struct KeeperStorage {
     map: HashMap<String, Node>,
 

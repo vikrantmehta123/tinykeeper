@@ -42,6 +42,7 @@ pub struct ApplyResult {
 /// notify/do cleanup.
 ///
 /// We need an inverse index also to do cleanup.
+#[derive(Clone)]
 pub struct WatchState {
     watches: HashMap<String, HashSet<SessionId>>,
     list_watches: HashMap<String, HashSet<SessionId>>,

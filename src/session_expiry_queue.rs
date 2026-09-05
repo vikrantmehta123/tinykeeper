@@ -1,6 +1,7 @@
 use crate::protocol::SessionId;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
+#[derive(Clone)]
 pub struct SessionExpiryQueue {
     session_to_expiry: HashMap<SessionId, i64>,
     expiry_to_sessions: BTreeMap<i64, HashSet<SessionId>>,

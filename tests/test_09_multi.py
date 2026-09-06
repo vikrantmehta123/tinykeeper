@@ -11,14 +11,10 @@ leans on this for leader election and for keeping its replication log
 consistent, which is why it belongs in v1 rather than in a later milestone.
 """
 
-import pytest
 from kazoo.exceptions import BadVersionError, NodeExistsError, RolledBackError
-
-from markers import MULTI, todo
 
 
 class TestSuccessfulTransactions:
-    @todo(MULTI)
     def test_create_and_set_together(self, zk):
         zk.create("/txn_existing", b"old")
 
@@ -33,7 +29,6 @@ class TestSuccessfulTransactions:
         assert zk.get("/txn_new")[0] == b"hello"
         assert zk.get("/txn_existing")[0] == b"updated"
 
-    @todo(MULTI)
     def test_the_results_come_back_in_order(self, zk):
         txn = zk.transaction()
         txn.create("/first", b"")
@@ -43,7 +38,6 @@ class TestSuccessfulTransactions:
         assert results[0] == "/first"
         assert results[1] == "/second"
 
-    @todo(MULTI)
     def test_delete_inside_a_transaction(self, zk):
         zk.create("/txn_del", b"bye")
 
@@ -53,7 +47,6 @@ class TestSuccessfulTransactions:
 
         assert zk.exists("/txn_del") is None
 
-    @todo(MULTI)
     def test_operations_see_each_other(self, zk):
         """Within one transaction the operations apply in order, so a later
         one can build on an earlier one."""
@@ -65,13 +58,11 @@ class TestSuccessfulTransactions:
         assert not any(isinstance(result, Exception) for result in results)
         assert zk.get("/parent_txn/child")[0] == b"data"
 
-    @todo(MULTI)
     def test_an_empty_transaction_is_harmless(self, zk):
         assert zk.transaction().commit() == []
 
 
 class TestRollback:
-    @todo(MULTI)
     def test_one_failure_rolls_back_the_rest(self, zk):
         """The set is perfectly legal on its own. It must still not apply,
         because the create next to it failed."""
@@ -90,7 +81,6 @@ class TestRollback:
         assert data == b"original"
         assert stat.version == 0
 
-    @todo(MULTI)
     def test_nothing_is_created_when_a_later_create_fails(self, zk):
         zk.create("/collision", b"")
 
@@ -108,7 +98,6 @@ class TestRollback:
 class TestVersionChecks:
     """`check` asserts a node's version without changing it."""
 
-    @todo(MULTI)
     def test_a_matching_check_lets_the_transaction_through(self, zk):
         zk.create("/check_ver", b"v0")
 
@@ -123,7 +112,6 @@ class TestVersionChecks:
         assert data == b"v1"
         assert stat.version == 1
 
-    @todo(MULTI)
     def test_a_failing_check_stops_everything(self, zk):
         zk.create("/check_bad", b"v0")
 
@@ -138,7 +126,6 @@ class TestVersionChecks:
         assert data == b"v0"
         assert stat.version == 0
 
-    @todo(MULTI)
     def test_a_check_on_an_unrelated_node_still_guards_the_write(self, zk):
         """The real pattern: guard a write to one node on the state of
         another. This is how a client says "only if I am still the leader"."""

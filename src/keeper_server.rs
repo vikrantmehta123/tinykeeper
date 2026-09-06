@@ -484,8 +484,11 @@ impl KeeperServer {
         let mut wal = self.wal.lock().await;
         wal.append(1, zxid as u64, 0, 0, &payload);
 
+        // WAL flush errors are risky! Stop processing further requests unless
+        // they are manually fixed.
         if let Err(error) = wal.flush().await {
-            todo!("Handle uncertain WAL persistence or rotation failure: {error}");
+            eprintln!("WAL flush failed; stopping server: {error}");
+            std::process::abort();
         }
 
         *tree = staged;

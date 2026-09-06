@@ -29,9 +29,14 @@ The goals of this project are the following:
 * User is not familiar with ZooKeeper, ClickHouse Keeper, and Raft. He knows ClickHouse terminology but not these other concepts. Don't assume any background knowledge from user. Act as a guide and an excellent teacher.
 * Think small. Don't dump everything at once. Think in small sections. Focus on clarity.
 * In terms of code design, focus on idiomatic Rust patterns and design patterns suggested in `Philosophy of Software Design`.
-* We develop this project in three versions. The third version is supposed to be usable. The earlier versions are smaller milestones to that goal. Currently, we are working towards the first version of the project.
+* We develop this project in three-four versions. The third version onwards is supposed to be usable. The earlier versions are smaller milestones to that goal. Currently, we are working towards the first version of the project.
 
 ## Expected End Goal for First Version 
 
 * A correct, complete single-node implementation of ZooKeeper. A real client like zkCli.sh should be able to connect to our server
 
+## Project Progression Targets
+* v1: A correct, complete single-node implementation of ZooKeeper. A real client like zkCli.sh should be able to connect to our server
+* v2: Integrate `openraft` into the single-node implementation. The observed behavior of the system shouldn't change from v1.
+* v3: Add multi-node support with a real network layer.
+* v4: Extensive testing and optimizations

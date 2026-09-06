@@ -484,12 +484,6 @@ impl MultiHeader {
         Some(MultiHeader { op_type, done, err })
     }
 
-    pub fn to_bytes(&self) -> Vec<u8> {
-        let mut buf = Vec::with_capacity(Self::SIZE);
-        self.encode_into(&mut buf);
-        buf
-    }
-
     fn encode_into(&self, buf: &mut Vec<u8>) {
         buf.extend_from_slice(&self.op_type.to_be_bytes());
         buf.push(u8::from(self.done));
@@ -696,6 +690,56 @@ impl MultiResponse {
 
         footer.encode_into(&mut buf);
         buf
+    }
+}
+
+pub struct AuthRequest<'a>{
+    auth_type: i32, 
+    scheme: &'a str,
+    auth: &'a [u8],
+}
+
+impl<'a> AuthRequest<'a> {
+    pub fn from_bytes(buf: &mut &'a [u8]) -> Option<Self> {
+        let mut cursor = *buf;
+        if cursor.len() < 4 {
+            return None;
+        }
+        
+        let auth_type = cursor.get_i32();
+        if cursor.len() < 4 {
+            return None;
+        }
+   
+        let scheme_len = usize::try_from(cursor.get_i32()).ok()?;
+        if cursor.len() < scheme_len {
+            return None;
+        }
+
+        let (scheme_bytes, remaining) = cursor.split_at(scheme_len);
+        let scheme = std::str::from_utf8(scheme_bytes).ok()?;
+        cursor = remaining;
+
+        // 3. Read the length-prefixed credentials.
+        if cursor.len() < 4 {
+            return None;
+        }
+        let auth_len = usize::try_from(cursor.get_i32()).ok()?;
+
+        if cursor.len() < auth_len {
+            return None;
+        }
+        let (auth, remaining) = cursor.split_at(auth_len);
+        cursor = remaining;
+
+        // Commit consumption only after all fields parsed successfully.
+        *buf = cursor;
+
+        Some(Self {
+            auth_type,
+            scheme,
+            auth,
+        })
     }
 }
 

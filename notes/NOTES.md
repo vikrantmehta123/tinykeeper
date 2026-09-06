@@ -57,6 +57,12 @@ Let's think about how this might be implemented in Rust:
 
 ---
 
+## Auth and ACL
+
+* Before creating a session, the client has to send an `auth` request. Only once authenticated, the session is created for the client.
+* ACLs are an authorization mechanism. When a client creates a node, it embeds in that node an ACL vector. This ACL vector specifies what users can perform what actions on that node. The ACL contains a `scheme` ( like "anyone", "ip", "digest", or "auth" ), `id` ( an identifier within the scheme, and `permissions`, which a bitmask combining Write, Read, Delete, Admin.
+* In each request on a particular node, the server has to verify and enforce the ACLs set on the node. 
+
 ## ZNodes
 
 At its core, ClickHouse Keeper (which is a drop-in replacement for ZooKeeper) is a coordination service for distributed systems.

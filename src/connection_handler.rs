@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use crate::dispatcher::KeeperDispatcher;
 use crate::protocol::{ConnectRequest, SessionId};
+use crate::auth::AuthId;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
@@ -56,6 +57,7 @@ pub struct ConnectionHandler {
     dispatcher: Arc<KeeperDispatcher>,
     idle_timeout: Duration,
     session_id: Option<SessionId>,
+    auth_ids: Vec<AuthId>,
 }
 
 impl ConnectionHandler {
@@ -69,6 +71,7 @@ impl ConnectionHandler {
             dispatcher,
             idle_timeout,
             session_id: None,
+            auth_ids: Vec::new(),
         }
     }
 

@@ -10,6 +10,7 @@ mod session_expiry_queue;
 mod storage;
 mod watch_state;
 mod znode;
+mod auth;
 
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;

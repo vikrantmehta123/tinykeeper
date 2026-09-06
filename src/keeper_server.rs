@@ -167,6 +167,17 @@ impl KeeperServer {
         })
     }
 
+    pub async fn touch_session(&self, session_id: SessionId) {
+        let mut tree = self.storage.write().await;
+
+        let now = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+
+        tree.session_state.touch_session(session_id, now);
+    }
+
     pub async fn create_session(&self, timeout_ms: i64) -> SessionId {
         let now = SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -230,15 +241,6 @@ impl KeeperServer {
 
         // TODO: Review the locking system end-to-end. Currently, we are holding onto the
         // locks for long time. And that's going to add to the cost
-        let now = SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as i64;
-        self.storage
-            .write()
-            .await
-            .session_state
-            .touch_session(session_id, now);
 
         let mut buf = payload;
         let header = RequestHeader::from_bytes(&mut buf).expect("unknown opcode");

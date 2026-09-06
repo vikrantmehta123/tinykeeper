@@ -12,10 +12,10 @@ accept auth without falling over. Enforcement can wait.
 """
 
 import pytest
-from kazoo.exceptions import BadVersionError
+from kazoo.exceptions import AuthFailedError, BadVersionError
 from kazoo.security import OPEN_ACL_UNSAFE, READ_ACL_UNSAFE, Permissions
 
-from markers import ACL, AUTH, todo
+from markers import ACL, todo
 
 
 class TestGetAcl:
@@ -85,7 +85,6 @@ class TestSetAcl:
 
 
 class TestAuth:
-    @todo(AUTH)
     def test_an_auth_request_is_answered(self, zk):
         """The session must survive it, and stay usable afterwards."""
         zk.add_auth("digest", "user:password")
@@ -94,8 +93,15 @@ class TestAuth:
         zk.create("/after_auth", b"works")
         assert zk.get("/after_auth")[0] == b"works"
 
-    @todo(AUTH)
     def test_auth_can_be_sent_more_than_once(self, zk):
         zk.add_auth("digest", "user_one:password")
         zk.add_auth("digest", "user_two:password")
         assert zk.connected
+
+    def test_unsupported_auth_scheme_is_rejected(self, zk):
+        result = zk.add_auth_async(
+            "tinykeeper-unsupported-scheme", "user:password"
+        )
+
+        with pytest.raises(AuthFailedError):
+            result.get(timeout=5)

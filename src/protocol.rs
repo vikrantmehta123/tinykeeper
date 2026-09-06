@@ -71,6 +71,7 @@ pub enum ErrorCode {
     NoChildrenForEphemerals = -108,
     NodeExists = -110,
     NotEmpty = -111,
+    AuthFailed = -115,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -693,10 +694,10 @@ impl MultiResponse {
     }
 }
 
-pub struct AuthRequest<'a>{
-    auth_type: i32, 
-    scheme: &'a str,
-    auth: &'a [u8],
+pub struct AuthRequest<'a> {
+    pub(crate) auth_type: i32,
+    pub(crate) scheme: &'a str,
+    pub(crate) auth: &'a [u8],
 }
 
 impl<'a> AuthRequest<'a> {
@@ -705,12 +706,12 @@ impl<'a> AuthRequest<'a> {
         if cursor.len() < 4 {
             return None;
         }
-        
+
         let auth_type = cursor.get_i32();
         if cursor.len() < 4 {
             return None;
         }
-   
+
         let scheme_len = usize::try_from(cursor.get_i32()).ok()?;
         if cursor.len() < scheme_len {
             return None;

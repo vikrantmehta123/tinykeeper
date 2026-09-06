@@ -1,9 +1,11 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::auth::{AuthId, authenticate};
 use crate::dispatcher::KeeperDispatcher;
-use crate::protocol::{ConnectRequest, SessionId};
-use crate::auth::AuthId;
+use crate::protocol::{
+    AuthRequest, ConnectRequest, ErrorCode, OpCode, ReplyHeader, RequestHeader, SessionId,
+};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
@@ -109,13 +111,61 @@ impl ConnectionHandler {
                 frame = read_frame(&mut reader, idle_timeout) => {
                     let Some(payload) = frame else { break };
 
-                    let opcode = i32::from_be_bytes(payload[4..8].try_into().unwrap());
+                    if payload.len() < 8 {
+                        break;
+                    }
+
+                    let mut buf = payload.as_slice();
+                    let Ok(header) = RequestHeader::from_bytes(&mut buf) else {
+                        break;
+                    };
+
+                    dispatcher.touch_session(session_id).await;
+
+                    if header.opcode == OpCode::Auth {
+                        let Some(request) = AuthRequest::from_bytes(&mut buf) else {
+                            break;
+                        };
+
+                        if !buf.is_empty() {
+                            break;
+                        }
+
+                        let err = match authenticate(request.scheme, request.auth) {
+                            Ok(identity) => {
+                                if !self.auth_ids.contains(&identity) {
+                                    self.auth_ids.push(identity);
+                                }
+                                ErrorCode::Ok
+                            }
+                            Err(_) => ErrorCode::AuthFailed,
+                        };
+
+                        let response = ReplyHeader {
+                            xid: header.xid,
+                            zxid: 0,
+                            err,
+                        };
+
+                        if !write_frame(&mut writer, &response.to_bytes()).await {
+                            break;
+                        }
+
+                        if err != ErrorCode::Ok {
+                            break;
+                        }
+
+                        continue;
+                    }
+
+
+
                     let response = dispatcher.dispatch(payload, session_id).await;
 
                     if !response.is_empty() && !write_frame(&mut writer, &response).await {
                         break;
                     }
-                    if opcode == -11 {
+                    if header.opcode == OpCode::Close {
                         println!("Close received, shutting down connection");
                         break;
                     }

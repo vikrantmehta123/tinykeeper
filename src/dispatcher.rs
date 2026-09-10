@@ -84,7 +84,6 @@ impl KeeperDispatcher {
         self.server.touch_session(session_id).await;
     }
 
-
     pub fn shutdown(&self) {
         // Stub: no background resources to stop yet with the tokio::spawn
         // approach. Will matter once session tracking has state to flush.

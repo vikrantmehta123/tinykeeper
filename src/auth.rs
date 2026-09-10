@@ -51,9 +51,6 @@ mod tests {
         let identity = authenticate("digest", b"super:test").unwrap();
 
         assert_eq!(identity.scheme, "digest");
-        assert_eq!(
-            identity.id,
-            "super:D/InIHSb7yEEbrWz8b9l71RjZJU="
-        );
+        assert_eq!(identity.id, "super:D/InIHSb7yEEbrWz8b9l71RjZJU=");
     }
 }
